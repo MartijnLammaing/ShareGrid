@@ -75,6 +75,20 @@ A thin forwarding layer between the Session Manager and llama.cpp. Responsibilit
 > **Why a proxy rather than a direct connection?**
 > Keeping an explicit proxy layer means future phases can inject policy — content filtering (Phase 3), structured tool-call parsing (Phase 2) — without changing the Session Manager or llama.cpp.
 
+### 2.5 Configuration
+
+All configuration is supplied via environment variables at `docker run` time. Nothing is baked into the image — the same image runs against any router. The Router Client reads these values on startup before attempting registration.
+
+| Variable | Required | Description | Example |
+|----------|:--------:|-------------|---------|
+| `SHAREGRID_ROUTER_URL` | Yes | LLMRouter endpoint the Router Client connects to | `https://router.example.com:8443` |
+| `SHAREGRID_LISTEN_PORT` | Yes | Port the Session Manager TLS listener binds to inside the container. Must match the `-p` flag supplied by the operator. | `9000` |
+| `SHAREGRID_MODEL_NAME` | Yes | Human-readable model name advertised to the router and shown to LLMUsers | `llama-3-8b-instruct-q4` |
+| `SHAREGRID_MODEL_CONTEXT_SIZE` | Yes | Context window size (tokens) advertised to the router so LLMUsers can make informed host selections | `8192` |
+| `SHAREGRID_HEARTBEAT_INTERVAL` | No | Seconds between heartbeat pings to the router. Default: `30` | `30` |
+
+If any required variable is absent, the container must exit immediately with a clear error message rather than starting in a partially configured state.
+
 ### 2.4 llama.cpp (Inference Server)
 
 Runs the LLM model and serves the inference API. Configured with `--parallel 1` in Phase 1 (single slot). Communicates with the Inference Proxy exclusively via an internal Unix socket — no network port is opened for this channel. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
@@ -169,21 +183,40 @@ All checks fail closed. No partial matches, no fallback paths. See [ADR-0001](./
 
 ### 5.3 Docker Hardening Configuration
 
-The host operator must start the container with these constraints. They are not left to convention — they must be enforced in the startup script or service definition:
+Hardening is split across two layers. The image enforces as much as possible by default so that a `docker run` with no hardening flags still has a reasonable baseline. The remaining constraints must be supplied by the operator at run time.
 
-| Constraint | Rationale |
+The actual Dockerfile is deferred to the implementation phase. This section specifies what it must contain.
+
+#### Image-level hardening (Dockerfile)
+
+These constraints are baked into the image and apply regardless of how `docker run` is invoked:
+
+| Constraint | Mechanism |
 |------------|-----------|
-| No volume mounts | LLM cannot read or write host filesystem |
-| Isolated bridge network (not `host`) | Container cannot see host network interfaces |
-| Single port published (Session Manager TLS only) | Minimise external attack surface |
-| No internet egress route | Phase 1 constraint; prevents proxy abuse |
-| Drop all Linux capabilities except what inference requires | Reduces kernel attack surface |
-| No privileged mode | Prevents container escape via device access |
-| Read-only root filesystem (where possible) | Prevents processes writing to the container OS layer |
-| No IPC sharing with host | Prevents shared-memory side channels |
-| User namespace remapping | Container root does not map to host root |
-| `--restart=on-failure` | Docker restarts the container on unexpected exit |
-| Digest-pinned image reference | Ensures the running image is byte-for-byte what was configured (ADR-0002) |
+| Non-root user | `USER sharegrid:sharegrid` instruction; container starts unprivileged without `--user` |
+| Minimal base image | Distroless or stripped Alpine; no shell, no package manager, no debugging tools |
+| Health check | `HEALTHCHECK` instruction targeting llama.cpp `GET /health`; Docker surfaces container readiness without operator configuration |
+| No-new-privileges | `setpriv --no-new-privs` in the entrypoint script; processes cannot escalate privileges via setuid or file capabilities |
+| No unnecessary binaries | Shells (`sh`, `bash`), `curl`, `wget`, `nc` and any other tools not required for inference are removed during the image build |
+| Locked-down file permissions | All files are root-owned and readable by `sharegrid` only; no files are writable by the application process |
+| Read-only compatible filesystem | The application writes nothing to the container filesystem at runtime; `/tmp` is the only exception and is mounted as `tmpfs` at run time if needed |
+| Bundled seccomp profile | A custom seccomp profile JSON is included in the image; the operator references it at run time with `--security-opt seccomp=...` |
+
+#### Runtime hardening (docker run flags)
+
+These constraints cannot be enforced from inside the image and are the operator's responsibility. Running without them is a violation of the trust model — the system cannot detect or prevent it:
+
+| Flag | Purpose |
+|------|---------|
+| `--cap-drop ALL --cap-add <required>` | Grants only the specific Linux capabilities inference requires; drops all others |
+| `--read-only` | Immutable container filesystem; combined with `--tmpfs /tmp` if the application needs a writable temp directory |
+| `--no-new-privileges` | Authoritative runtime enforcement; supplements the entrypoint-level `setpriv` |
+| `--network <isolated bridge>` | Container cannot see host network interfaces |
+| `--ipc=none` | No shared memory with host |
+| `--restart=on-failure` | Docker automatically restarts the container on unexpected exit |
+| `-p <host-port>:<container-port>` | Publishes only the Session Manager TLS port; no other ports are exposed |
+| Digest-pinned image reference | `registry/llmhost@sha256:<digest>` — enforced per [ADR-0002](./adr/0002-container-image-digest-pinning.md) |
+| Environment variables | Required configuration values per §2.5 — router URL, listen port, model metadata |
 
 ### 5.4 Session Isolation
 
