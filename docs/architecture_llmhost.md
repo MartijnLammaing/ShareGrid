@@ -77,17 +77,28 @@ A thin forwarding layer between the Session Manager and llama.cpp. Responsibilit
 
 ### 2.5 Configuration
 
-All configuration is supplied via environment variables at `docker run` time. Nothing is baked into the image — the same image runs against any router. The Router Client reads these values on startup before attempting registration.
+Configuration comes from two sources: values baked into the image at build time (because they are known when the model is included), and values supplied by the operator at `docker run` time (because they differ per deployment).
+
+#### Build-time configuration (Dockerfile ENV defaults)
+
+These values are set as `ENV` instructions in the Dockerfile when the model is added to the image. The operator does not need to supply them — they are intrinsic to the image:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `SHAREGRID_MODEL_NAME` | Human-readable model name advertised to the router and shown to LLMUsers | `llama-3-8b-instruct-q4` |
+| `SHAREGRID_MODEL_CONTEXT_SIZE` | Context window size (tokens) advertised to the router so LLMUsers can make informed host selections | `8192` |
+
+#### Runtime configuration (docker run environment variables)
+
+These values cannot be known at build time and must be supplied by the operator. The Router Client reads them on startup before attempting registration:
 
 | Variable | Required | Description | Example |
 |----------|:--------:|-------------|---------|
 | `SHAREGRID_ROUTER_URL` | Yes | LLMRouter endpoint the Router Client connects to | `https://router.example.com:8443` |
 | `SHAREGRID_LISTEN_PORT` | Yes | Port the Session Manager TLS listener binds to inside the container. Must match the `-p` flag supplied by the operator. | `9000` |
-| `SHAREGRID_MODEL_NAME` | Yes | Human-readable model name advertised to the router and shown to LLMUsers | `llama-3-8b-instruct-q4` |
-| `SHAREGRID_MODEL_CONTEXT_SIZE` | Yes | Context window size (tokens) advertised to the router so LLMUsers can make informed host selections | `8192` |
 | `SHAREGRID_HEARTBEAT_INTERVAL` | No | Seconds between heartbeat pings to the router. Default: `30` | `30` |
 
-If any required variable is absent, the container must exit immediately with a clear error message rather than starting in a partially configured state.
+If any required runtime variable is absent, the container must exit immediately with a clear error message rather than starting in a partially configured state.
 
 ### 2.4 llama.cpp (Inference Server)
 
