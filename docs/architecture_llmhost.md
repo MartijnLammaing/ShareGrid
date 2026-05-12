@@ -16,80 +16,68 @@ The LLMHost has three distinct concerns that must be kept architecturally separa
 
 ## 2. Internal Component Structure
 
-The LLMHost is a host-side process (the **Host Agent**) that manages the container and mediates all network traffic. It is not a monolith; it is composed of four focused sub-components.
+The LLMHost is a single Docker container. All logic — routing client, session management, inference proxying, and LLM inference — runs inside it. The host machine's only responsibility is starting the container. See [ADR-0005](./adr/0005-host-agent-inside-container.md).
 
 ```mermaid
 graph TB
     subgraph Host Machine
-        subgraph Host Agent Process
+        ST[docker run\nstartup script]
+
+        subgraph Docker Container hardened
             RC[Router Client]
             SM[Session Manager]
             IP[Inference Proxy]
-            CM[Container Manager]
-        end
-
-        subgraph Docker Container hardened
-            IS[Inference Server\ne.g. HTTP API]
-            LLM[LLM Model Weights]
+            LLM[llama.cpp]
         end
     end
 
     R([LLMRouter]) -- "TLS" --- RC
     U([LLMUser]) -- "TLS" --- SM
 
-    RC -- "registration\nheartbeat" --> RC
-    SM -- "validate host key\nlock session slot" --> SM
+    RC -- "host key + router\npublic key" --> SM
     SM --> IP
-    IP -- "HTTP / local socket" --> IS
-    IS --> LLM
-    CM -- "start / stop / health-check" --> IS
-
-    RC -- "notify: ready / shutdown" --> SM
-    CM -- "notify: container ready\ncontainer failed" --> SM
+    IP -- "Unix socket\n(internal)" --> LLM
+    ST -- "starts" --> RC
 ```
 
 ### 2.1 Router Client
 
-Owns the persistent connection to LLMRouter. Responsibilities:
+Owns the connection to LLMRouter. Responsibilities:
 
-- Establish the TLS connection to the configured router address on startup.
-- Send the registration payload (model metadata, listening endpoint).
-- Receive and securely store the router-issued **host key** in memory (never written to disk; see §5.1).
+- Generate an ephemeral TLS keypair at startup. The private key is held in memory only and is never written to disk.
+- Establish the TLS connection to the configured router address.
+- Send the registration payload: model metadata, the Session Manager's listening port, and the TLS cert fingerprint so LLMUsers can pin to it.
+- Receive and store the router-issued **host key** and the **router's Ed25519 public key** in memory.
+- Pass both keys to the Session Manager once registration is confirmed.
 - Emit a heartbeat on a fixed interval to keep the router registry entry alive.
-- Detect router disconnection and trigger a re-registration flow.
-- Signal the Session Manager when registration is confirmed (host is allowed to accept users) and when the router connection is lost (host must refuse new sessions).
+- On router disconnection, attempt reconnection with exponential backoff and signal the Session Manager to stop accepting new sessions until re-registration succeeds.
 
 ### 2.2 Session Manager
 
 The single point of entry for incoming LLMUser connections. Responsibilities:
 
-- Maintain a **session slot** — a binary lock that is acquired when a session opens and released on teardown. In Phase 1 this enforces the one-session-at-a-time constraint.
-- Validate the **host key** presented by the connecting LLMUser before any inference traffic is allowed.
-- Reject connections when: (a) the session slot is occupied, (b) the router connection is not established, or (c) key validation fails.
+- Maintain a **session slot** — a binary lock acquired when a session opens and released on teardown. In Phase 1 this enforces the one-session-at-a-time constraint.
+- Validate the **host key** presented by the connecting LLMUser before any inference traffic is allowed (see §5.2).
+- Reject connections when: (a) the session slot is occupied, (b) router registration is not confirmed, or (c) key validation fails.
 - Hand off a validated session to the Inference Proxy.
-- Coordinate session teardown: instruct the Inference Proxy to flush, then release the session slot.
+- Coordinate session teardown: instruct the Inference Proxy to flush the llama.cpp slot, then release the session lock.
+- On slot-erase failure, exit the container with a non-zero code — Docker's `--restart=on-failure` policy will restart it and trigger a clean re-registration.
 
 ### 2.3 Inference Proxy
 
-A thin forwarding layer between the Session Manager and the container's Inference Server. Responsibilities:
+A thin forwarding layer between the Session Manager and llama.cpp. Responsibilities:
 
-- Forward prompts from the LLMUser to the llama.cpp server via its `POST /v1/chat/completions` endpoint on the Docker bridge address.
+- Forward prompts from the LLMUser to llama.cpp via `POST /v1/chat/completions` over an internal Unix socket.
 - Stream responses back to the LLMUser.
 - Apply no transformation to content — it is a transparent pipe.
-- On session teardown, call llama.cpp's slot-erase endpoint (`DELETE /slots/{id}`) to explicitly clear the KV cache before the session lock is released. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
+- On session teardown, call llama.cpp's `DELETE /slots/0` endpoint to explicitly wipe the KV cache before the session lock is released. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
 
 > **Why a proxy rather than a direct connection?**
-> Placing an explicit proxy layer here means future phases can inject policy (content filtering in Phase 3, structured tool-call parsing in Phase 2) without changing the Session Manager or the container internals.
+> Keeping an explicit proxy layer means future phases can inject policy — content filtering (Phase 3), structured tool-call parsing (Phase 2) — without changing the Session Manager or llama.cpp.
 
-### 2.4 Container Manager
+### 2.4 llama.cpp (Inference Server)
 
-Owns the Docker container lifecycle. Responsibilities:
-
-- Pull and verify the container image on first run using **digest pinning**: the image reference in config must include a `sha256` digest (e.g. `registry/image@sha256:<digest>`), and the Docker daemon enforces the match before the container starts. If the digest-qualified pull fails for any reason, startup is aborted — there is no fallback to a tag-based pull. See [ADR-0002](./adr/0002-container-image-digest-pinning.md).
-- Start the container with the hardened configuration described in §4. The container is a **keep-alive** instance — it starts with the Host Agent and remains running across sessions. It is not recreated per session. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
-- Poll the llama.cpp health endpoint (`GET /health`) until it returns ready, then signal the Session Manager.
-- Monitor the container process; escalate to a fatal error if it exits unexpectedly.
-- On shutdown, send a graceful stop signal to the container, wait for it to exit, then remove it.
+Runs the LLM model and serves the inference API. Configured with `--parallel 1` in Phase 1 (single slot). Communicates with the Inference Proxy exclusively via an internal Unix socket — no network port is opened for this channel. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
 
 ---
 
@@ -97,27 +85,22 @@ Owns the Docker container lifecycle. Responsibilities:
 
 ```mermaid
 sequenceDiagram
-    participant OS as Host OS
-    participant CM as Container Manager
-    participant IS as Inference Server (in container)
-    participant RC as Router Client
-    participant SM as Session Manager
+    participant H as Host Operator
+    participant D as Docker Daemon
+    participant RC as Router Client (in container)
+    participant SM as Session Manager (in container)
+    participant LLM as llama.cpp (in container)
     participant R as LLMRouter
 
-    OS->>CM: Start Host Agent
-    CM->>CM: Pull / verify container image
-    CM->>IS: docker run (hardened config)
-    CM->>IS: Poll health endpoint
-    IS-->>CM: 200 OK (ready)
-    CM->>SM: Container ready
-
-    SM->>RC: Initiate router connection
-    RC->>R: TLS connect + register\n(model metadata, listening endpoint)
+    H->>D: docker run (digest-pinned image,\nhardening flags, --restart=on-failure)
+    D->>D: Verify image digest (ADR-0002)
+    D->>RC: Start container processes
+    RC->>RC: Generate ephemeral TLS keypair
+    LLM->>LLM: Load model weights\nListen on internal Unix socket
+    RC->>R: TLS connect + register\n(model metadata, port, TLS cert fingerprint)
     R->>R: Add to host registry\nGenerate host key
-    R-->>RC: Host key (signed token)
-    RC->>RC: Store host key in memory
-    RC->>SM: Registration confirmed
-
+    R-->>RC: Host key (Ed25519-signed token)\n+ router public key
+    RC->>SM: Pass host key + router public key
     SM->>SM: Open session slot (accepting)
     Note over SM: LLMHost is now ready to accept sessions
 ```
@@ -131,10 +114,10 @@ sequenceDiagram
     participant U as LLMUser
     participant SM as Session Manager
     participant IP as Inference Proxy
-    participant IS as Inference Server
+    participant LLM as llama.cpp
 
-    U->>SM: Open TLS connection\nPresent host key
-    SM->>SM: Validate host key
+    U->>SM: Open TLS connection\n(pinned to registered cert fingerprint)\nPresent host key
+    SM->>SM: Validate host key (§5.2)
     SM->>SM: Acquire session slot
 
     alt key invalid or slot occupied
@@ -145,16 +128,16 @@ sequenceDiagram
         loop Conversation turns
             U->>SM: Prompt
             SM->>IP: Forward prompt
-            IP->>IS: POST /inference (or equivalent)
-            IS-->>IP: Response stream
+            IP->>LLM: POST /v1/chat/completions\n(Unix socket)
+            LLM-->>IP: Response stream
             IP-->>SM: Forward response stream
             SM-->>U: Response stream
         end
 
         U->>SM: Close session
         SM->>IP: Teardown: flush session
-        IP->>IS: Reset context / clear history
-        IS-->>IP: Confirmed
+        IP->>LLM: DELETE /slots/0
+        LLM-->>IP: Confirmed
         SM->>SM: Release session slot
         SM-->>U: Connection closed
     end
@@ -164,47 +147,57 @@ sequenceDiagram
 
 ## 5. Security Design
 
-### 5.1 Host Key Storage
+### 5.1 Host Key and TLS Key Storage
 
-The host key received from the router is held **in process memory only**. It is never written to disk. Consequences:
+All keys are held **in process memory only**. Nothing is written to disk or to the host filesystem. Consequences:
 
-- If the Host Agent restarts, it must re-register with the router to obtain a new key.
-- Any LLMUser holding the old key is automatically invalidated — they must reconnect through the router.
-- This is intentional: it prevents a stale key on disk from being used to impersonate a host after a restart.
+- On container restart, the Router Client generates a new TLS keypair and re-registers as a new host. The previous host key and TLS cert are gone.
+- Any LLMUser holding a token for the previous instance is automatically invalidated and must reconnect through the router.
+- This is intentional: no stale credentials can persist across restarts, and no sensitive material is ever present on the host filesystem.
 
-The Router Client also receives and stores the **router's Ed25519 public key** during the registration handshake. This public key is used by the Session Manager to verify the signature on any host key presented by a connecting LLMUser. The public key may be pre-configured out-of-band as an alternative to receiving it over the wire. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md).
+The Router Client also receives and stores the **router's Ed25519 public key** during registration. This is used by the Session Manager to verify the signature on host keys presented by connecting LLMUsers. The public key may alternatively be pre-configured out-of-band. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md).
 
 ### 5.2 Session Key Validation
 
 The LLMUser presents the host key verbatim as received from the router. The Session Manager verifies it as follows:
 
-1. **Signature check** — verify the Ed25519 signature on the token using the router's public key (held in memory by the Router Client). A token that does not pass this check is rejected immediately, regardless of its contents.
-2. **Expiry check** — the signed payload includes an expiry timestamp. Tokens past their expiry are rejected.
+1. **Signature check** — verify the Ed25519 signature using the router's public key. Any token failing this check is rejected immediately.
+2. **Expiry check** — the signed payload includes an expiry timestamp. Expired tokens are rejected.
 3. **Host match check** — the signed payload includes the host identifier. Tokens issued for a different host are rejected.
 
-All checks fail closed. No partial matches, no fallback paths. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md) for the rationale for asymmetric signing over HMAC.
+All checks fail closed. No partial matches, no fallback paths. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md).
 
 ### 5.3 Docker Hardening Configuration
 
-The container is started by the Container Manager with these constraints enforced programmatically — they are not left to manual Docker configuration:
+The host operator must start the container with these constraints. They are not left to convention — they must be enforced in the startup script or service definition:
 
 | Constraint | Rationale |
 |------------|-----------|
 | No volume mounts | LLM cannot read or write host filesystem |
-| Isolated bridge network (not `host`) | LLM cannot see host network interfaces |
-| Single port exposed (inference API only) | Minimise network attack surface |
+| Isolated bridge network (not `host`) | Container cannot see host network interfaces |
+| Single port published (Session Manager TLS only) | Minimise external attack surface |
 | No internet egress route | Phase 1 constraint; prevents proxy abuse |
 | Drop all Linux capabilities except what inference requires | Reduces kernel attack surface |
 | No privileged mode | Prevents container escape via device access |
-| Read-only root filesystem (where possible) | Prevents the LLM process from writing to the container OS layer |
+| Read-only root filesystem (where possible) | Prevents processes writing to the container OS layer |
 | No IPC sharing with host | Prevents shared-memory side channels |
 | User namespace remapping | Container root does not map to host root |
+| `--restart=on-failure` | Docker restarts the container on unexpected exit |
+| Digest-pinned image reference | Ensures the running image is byte-for-byte what was configured (ADR-0002) |
 
 ### 5.4 Session Isolation
 
-The container remains running between sessions (keep-alive). Between sessions, the Inference Proxy calls llama.cpp's slot-erase endpoint (`DELETE /slots/0` for the single Phase 1 slot) to explicitly wipe the KV cache. The model has no memory of the previous session's tokens once this call succeeds.
+Between sessions, the Inference Proxy calls llama.cpp's `DELETE /slots/0` to explicitly wipe the KV cache. The model has no memory of the previous session's tokens once this call succeeds.
 
-If the slot-erase call does not return success, the Session Manager treats the container as tainted and instructs the Container Manager to restart it. The Host Agent must not accept a new session until either the erase is confirmed or the container has been restarted clean. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
+If the slot-erase call fails, the Session Manager exits the container with a non-zero code. Docker's `--restart=on-failure` policy restarts the container. The host re-registers as a new host. No session is accepted on a container that has not confirmed a clean slot state. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
+
+### 5.5 Trust Boundary
+
+The security measures in this document protect against **non-root host processes** and **external actors** who should not have access to the inference channel or session data.
+
+They do not protect against a **malicious LLMHost operator**. Root on the host can read container process memory, attach a debugger via `ptrace`, and intercept traffic at the NIC level — regardless of what runs inside the container. No transport choice or hardening measure closes this gap.
+
+**ShareGrid's trust model requires that LLMHost operators are trusted participants.** A LLMUser is placing the same trust in a host operator as they would in a cloud provider — socially and contractually, not technically. This must be clearly communicated to LLMUsers. See also [`architecture_overview.md`](./architecture_overview.md) §5.
 
 ---
 
@@ -212,11 +205,10 @@ If the slot-erase call does not return success, the Session Manager treats the c
 
 | Failure | Response |
 |---------|----------|
-| Router connection lost during idle (no active session) | Router Client attempts reconnection with exponential backoff. Session slot remains closed until re-registration succeeds. |
-| Router connection lost during active session | Active session is allowed to complete. New sessions are rejected until re-registration succeeds. |
-| Container exits unexpectedly (idle) | Container Manager restarts the container and re-runs the health-check loop. Session slot remains closed. |
-| Container exits unexpectedly (during session) | Session is terminated. LLMUser receives an error. Container Manager restarts the container. The host re-registers if the host key has been lost. |
-| Context-reset not confirmed after session teardown | Container Manager restarts the container. Host key is still valid; no re-registration needed unless the Inference Server is the key holder (it is not — the Router Client holds it). |
+| Router connection lost (no active session) | Router Client attempts reconnection with exponential backoff. Session slot remains closed until re-registration succeeds. |
+| Router connection lost (during active session) | Active session is allowed to complete. New sessions are rejected until re-registration succeeds. |
+| Container exits unexpectedly | Docker `--restart=on-failure` restarts it. Container re-registers as a new host. The host disappears from the router registry until re-registration completes. |
+| Slot-erase fails after session teardown | Session Manager exits the container with a non-zero code. Docker restarts it. Re-registration follows. |
 | Session slot occupied when new connection arrives | Immediate rejection with a "host busy" error. No queue is maintained in Phase 1. |
 
 ---
@@ -226,22 +218,20 @@ If the slot-erase call does not return success, the Session Manager treats the c
 | Phase | Change | What it means for LLMHost |
 |-------|--------|---------------------------|
 | **1** | MVP | Architecture described in this document. |
-| **2** | Structured tool-call responses (file writes, shell commands on user machine) | Inference Proxy must parse structured output from the Inference Server and forward it as typed payloads rather than raw text. Session Manager must handle a richer protocol. |
-| **3** | Controlled internet access | Container networking gains a filtered egress proxy. Container Manager must configure the container's DNS and routing to go through that proxy. No egress outside the allowed list. |
-| **4** | Multiple simultaneous sessions | Session Manager's binary session slot becomes a capacity counter or a queue. Router Client must report current load so the router can make routing decisions. Session isolation (§5.4) becomes more critical. |
-| **Future** | Resource accounting | Host Agent gains a metering layer that tracks token throughput and reports to the router for credit/debit accounting. |
+| **2** | Structured tool-call responses (file writes, shell commands on user machine) | Inference Proxy must parse structured output from llama.cpp and forward typed payloads rather than raw text. Session Manager must handle a richer protocol. |
+| **3** | Controlled internet access | Container networking gains a filtered egress proxy. The startup script must configure the container's DNS and routing through that proxy. No egress outside the allowed list. |
+| **4** | Multiple simultaneous sessions | Session Manager's binary session slot becomes a capacity counter or queue. Router Client must report current load. `--parallel N` in llama.cpp expands slot count. |
+| **Future** | Resource accounting | A metering layer inside the container tracks token throughput and reports to the router. |
 
 ---
 
 ## 8. Open Design Decisions
 
-These are decisions that must be made before implementation but are not resolved at architecture level. Each is a candidate for an ADR (see [`architecture_decision_record.md`](./architecture_decision_record.md)).
-
 | # | Question | Status | Notes |
 |---|----------|--------|-------|
 | 1 | **Host key signing algorithm** | Decided — [ADR-0001](./adr/0001-asymmetric-host-key-signing.md) | Ed25519 asymmetric signing. Router holds private key; hosts verify with router's public key. |
 | 2 | **Inference Server inside container** | Decided — [ADR-0003](./adr/0003-llmcpp-shared-container.md) | llama.cpp server. Shared keep-alive container, single slot (`--parallel 1`) in Phase 1. |
-| 3 | **Container image integrity verification** | Decided — [ADR-0002](./adr/0002-container-image-digest-pinning.md) | Digest pinning via `sha256` digest in config. No fallback to tag-based pull. Signature verification is the upgrade path for later phases. |
-| 4 | **Inference Proxy ↔ Inference Server transport** | Open | HTTP on the Docker bridge vs. a Unix socket. Unix socket avoids opening any network port inside the container but may complicate Docker networking setup. |
-| 5 | **Context-reset mechanism** | Decided — [ADR-0003](./adr/0003-llmcpp-shared-container.md) | llama.cpp `DELETE /slots/{id}` slot-erase endpoint. Container restart as fallback if erase fails. |
-| 6 | **Re-registration identity** | Open | When the Host Agent restarts, how does it prove to the router it is the same host (to reclaim its slot) vs. a new host? Public/private keypair on the host machine is a natural answer. |
+| 3 | **Container image integrity verification** | Decided — [ADR-0002](./adr/0002-container-image-digest-pinning.md) | Digest pinning via `sha256` digest. No fallback to tag-based pull. |
+| 4 | **Inference Proxy ↔ Inference Server transport** | Decided — [ADR-0005](./adr/0005-host-agent-inside-container.md) | Internal Unix socket within the container. No bind mount required. |
+| 5 | **Context-reset mechanism** | Decided — [ADR-0003](./adr/0003-llmcpp-shared-container.md) | llama.cpp `DELETE /slots/0`. Container exit + Docker restart as fallback. |
+| 6 | **Re-registration identity** | Decided — [ADR-0005](./adr/0005-host-agent-inside-container.md) | Each restart is a new host. No persistent identity. Router accepts any valid re-registration. |

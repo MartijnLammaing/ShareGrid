@@ -33,18 +33,20 @@ graph TB
     end
 
     subgraph Host Machine
+        ST[docker run\nstartup script]
         subgraph Docker Container hardened
-            LLM[LLM Model]
-            H[LLMHost<br/>API Adapter]
+            AG[Router Client +\nSession Manager +\nInference Proxy]
+            LLM[llama.cpp]
         end
     end
 
     U -- "1. Register / Handshake (TLS)" --> R
-    R -- "2. Host list + session token" --> U
-    H -- "A. Register + receive host key (TLS)" --> R
-    R -- "B. Host key (auth token)" --> H
-    U -- "3. Direct encrypted session (TLS + host key)" --> H
-    H -- "4. LLM responses" --> U
+    R -- "2. Host list + session token\n(incl. TLS cert fingerprint)" --> U
+    AG -- "A. Register + receive host key (TLS)" --> R
+    R -- "B. Host key + router public key" --> AG
+    U -- "3. Direct TLS session\n(pinned cert + host key)" --> AG
+    AG -- "4. LLM responses" --> U
+    ST -- "starts" --> AG
 ```
 
 ---
@@ -55,16 +57,18 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant H as LLMHost
+    participant O as Host Operator
+    participant D as Docker Daemon
+    participant H as LLMHost (inside container)
     participant R as LLMRouter
-    participant D as Docker Container
 
-    H->>D: Start hardened container with LLM
-    D-->>H: Container ready, port exposed
-    H->>R: Connect + register (TLS)<br/>Send: host metadata, model info, endpoint
-    R->>R: Validate registration<br/>Add to host registry
-    R-->>H: Issue host key (signed token)
-    H->>H: Store host key<br/>Only accept sessions presenting this key
+    O->>D: docker run (digest-pinned image,\nhardening flags, --restart=on-failure)
+    D->>H: Start container processes
+    H->>H: Generate ephemeral TLS keypair
+    H->>R: Connect + register (TLS)<br/>Send: model metadata, port, TLS cert fingerprint
+    R->>R: Validate registration<br/>Add to host registry<br/>Generate host key
+    R-->>H: Host key (Ed25519-signed token)<br/>+ router public key
+    H->>H: Store keys in memory only<br/>Open session slot
 
     loop Heartbeat
         H->>R: Heartbeat ping
@@ -110,18 +114,30 @@ sequenceDiagram
 
 Security is a first-class concern. The threat model covers both the host side (protecting the host machine from the LLM and from users) and the user side (protecting the user from a malicious host).
 
-### 5.1 Threat Model Summary
+### 5.1 Trust Boundary
+
+ShareGrid's security model protects against external and non-privileged threats. It has one explicit, inherent limitation:
+
+**A LLMHost operator with root access to their own machine is a trusted participant.** Root can read process memory, attach a debugger to any running process, and intercept traffic before encryption is applied. No transport choice, container hardening measure, or encryption of internal channels can prevent a determined root-level attacker on the host machine from accessing conversation data.
+
+This is not unique to ShareGrid — it is true of every cloud provider. A LLMUser is placing the same trust in a host operator as they would in a managed cloud service: a social and contractual trust, not a technical guarantee. **LLMUsers must understand that they are trusting the operator of the host they connect to.**
+
+Hardware-level isolation (e.g. TEE/SGX enclaves) would be required to close this gap technically. That is out of scope for all current phases.
+
+### 5.2 Threat Model Summary
 
 | Threat | Mitigation |
 |--------|------------|
-| Malicious actor posing as a legitimate LLMHost | Router-issued host keys; hosts must re-register and re-prove identity on reconnect |
+| Malicious actor posing as a legitimate LLMHost | Router-issued Ed25519-signed host keys; hosts must re-register on reconnect |
 | Eavesdropping on User ↔ Host traffic | All User ↔ Host communication is a direct, encrypted TLS channel |
-| LLM or host process accessing the host machine | Hardened Docker container with no volume mounts, no host networking, no host IPC |
+| LLM or host process accessing the host machine | Hardened Docker container; no host networking, no host IPC, minimal capabilities |
 | LLM output containing malware targeting the user | Phase 1: output is plain text only — no execution, no file writes on user machine |
-| Information leaking between sessions on the same host | Session state is explicitly torn down after each session; container is stateless across sessions |
+| Information leaking between sessions on the same host | llama.cpp slot explicitly erased after each session; container restarted if erase fails |
 | Host LLM used as internet proxy | Phase 1: no internet access configured in container |
+| Non-root host process accessing the inference channel | Unix socket with `chmod 700`; no network port exposed for internal traffic |
+| Malicious LLMHost operator (root) | Out of scope — see trust boundary above |
 
-### 5.2 Security Architecture Diagram
+### 5.3 Security Architecture Diagram
 
 ```mermaid
 graph LR
@@ -149,16 +165,17 @@ graph LR
     style WWW fill:#fdd,stroke:#f00
 ```
 
-### 5.3 Docker Hardening Requirements (Phase 1)
+### 5.4 Docker Hardening Requirements (Phase 1)
 
-The Docker container running the LLM must be configured with:
+The Docker container running the LLMHost must be configured with:
 
 - No volume mounts to the host filesystem
-- No host network mode (use isolated bridge network with a single exposed inference port)
+- No host network mode; one port published externally (Session Manager TLS listener only); all internal traffic uses a Unix socket inside the container
 - No IPC sharing with host
 - Drop all Linux capabilities not required for inference
 - Read-only root filesystem where possible
 - No privileged mode
+- `--restart=on-failure` so Docker restarts the container on unexpected exit
 
 ---
 
@@ -175,11 +192,11 @@ The Docker container running the LLM must be configured with:
 
 ### LLMHost
 
-- Starts and manages the hardened Docker container containing the LLM
-- Registers with the configured LLMRouter on startup
-- Stores the router-issued host key and enforces it on all incoming connections
+- Is a single Docker container; the host operator's only responsibility is running `docker run` with the correct hardening flags and digest-pinned image
+- Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter
+- Stores the router-issued host key in memory and enforces it on all incoming LLMUser connections
 - Accepts one session at a time (Phase 1 constraint)
-- Tears down all session state on session end
+- Wipes all session state (llama.cpp KV cache) on session end; exits the container if the wipe cannot be confirmed
 
 ### LLMUser
 
