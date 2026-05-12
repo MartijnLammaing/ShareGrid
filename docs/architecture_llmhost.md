@@ -172,11 +172,17 @@ The host key received from the router is held **in process memory only**. It is 
 - Any LLMUser holding the old key is automatically invalidated — they must reconnect through the router.
 - This is intentional: it prevents a stale key on disk from being used to impersonate a host after a restart.
 
+The Router Client also receives and stores the **router's Ed25519 public key** during the registration handshake. This public key is used by the Session Manager to verify the signature on any host key presented by a connecting LLMUser. The public key may be pre-configured out-of-band as an alternative to receiving it over the wire. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md).
+
 ### 5.2 Session Key Validation
 
-The LLMUser presents the host key verbatim as received from the router. The Session Manager performs a constant-time comparison against the in-memory key. No partial matches, no fallback paths.
+The LLMUser presents the host key verbatim as received from the router. The Session Manager verifies it as follows:
 
-The router signs the key. The Host Agent must verify the router's signature, not just compare bytes. This prevents a LLMUser from fabricating a key without going through the router. (Key signing algorithm is an open decision — see §8.)
+1. **Signature check** — verify the Ed25519 signature on the token using the router's public key (held in memory by the Router Client). A token that does not pass this check is rejected immediately, regardless of its contents.
+2. **Expiry check** — the signed payload includes an expiry timestamp. Tokens past their expiry are rejected.
+3. **Host match check** — the signed payload includes the host identifier. Tokens issued for a different host are rejected.
+
+All checks fail closed. No partial matches, no fallback paths. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md) for the rationale for asymmetric signing over HMAC.
 
 ### 5.3 Docker Hardening Configuration
 
@@ -229,11 +235,11 @@ Between sessions, the Inference Proxy sends a context-reset instruction to the I
 
 These are decisions that must be made before implementation but are not resolved at architecture level. Each is a candidate for an ADR (see [`architecture_decision_record.md`](./architecture_decision_record.md)).
 
-| # | Question | Options / Notes |
-|---|----------|-----------------|
-| 1 | **Host key signing algorithm** | Symmetric HMAC (simpler, requires shared secret bootstrap) vs. asymmetric signing (router holds private key, hosts verify with public key — better for Phase 4 multi-router). |
-| 2 | **Inference Server inside container** | The specific LLM serving software (e.g. llama.cpp server, Ollama, vLLM). Determines the local API protocol the Inference Proxy speaks. |
-| 3 | **Container image integrity verification** | Digest pinning in config vs. a signature scheme (e.g. Sigstore/cosign). Digest pinning is simpler for Phase 1. |
-| 4 | **Inference Proxy ↔ Inference Server transport** | HTTP on the Docker bridge vs. a Unix socket. Unix socket avoids opening any network port inside the container but may complicate Docker networking setup. |
-| 5 | **Context-reset mechanism** | Depends on the chosen Inference Server. Some support an explicit `/reset` endpoint; others require a fresh process. This determines whether the container must be restarted between sessions. |
-| 6 | **Re-registration identity** | When the Host Agent restarts, how does it prove to the router it is the same host (to reclaim its slot) vs. a new host? Public/private keypair on the host machine is a natural answer. |
+| # | Question | Status | Notes |
+|---|----------|--------|-------|
+| 1 | **Host key signing algorithm** | Decided — [ADR-0001](./adr/0001-asymmetric-host-key-signing.md) | Ed25519 asymmetric signing. Router holds private key; hosts verify with router's public key. |
+| 2 | **Inference Server inside container** | Open | The specific LLM serving software (e.g. llama.cpp server, Ollama, vLLM). Determines the local API protocol the Inference Proxy speaks. |
+| 3 | **Container image integrity verification** | Open | Digest pinning in config vs. a signature scheme (e.g. Sigstore/cosign). Digest pinning is simpler for Phase 1. |
+| 4 | **Inference Proxy ↔ Inference Server transport** | Open | HTTP on the Docker bridge vs. a Unix socket. Unix socket avoids opening any network port inside the container but may complicate Docker networking setup. |
+| 5 | **Context-reset mechanism** | Open | Depends on the chosen Inference Server. Some support an explicit `/reset` endpoint; others require a fresh process. This determines whether the container must be restarted between sessions. |
+| 6 | **Re-registration identity** | Open | When the Host Agent restarts, how does it prove to the router it is the same host (to reclaim its slot) vs. a new host? Public/private keypair on the host machine is a natural answer. |
