@@ -85,7 +85,7 @@ A thin forwarding layer between the Session Manager and the container's Inferenc
 
 Owns the Docker container lifecycle. Responsibilities:
 
-- Pull and verify the container image on first run (image integrity check; exact mechanism is an open decision — see §8).
+- Pull and verify the container image on first run using **digest pinning**: the image reference in config must include a `sha256` digest (e.g. `registry/image@sha256:<digest>`), and the Docker daemon enforces the match before the container starts. If the digest-qualified pull fails for any reason, startup is aborted — there is no fallback to a tag-based pull. See [ADR-0002](./adr/0002-container-image-digest-pinning.md).
 - Start the container with the hardened configuration described in §4.
 - Poll the Inference Server's health endpoint until it is ready, then signal the Session Manager.
 - Monitor the container process; escalate to a fatal error if it exits unexpectedly.
@@ -239,7 +239,7 @@ These are decisions that must be made before implementation but are not resolved
 |---|----------|--------|-------|
 | 1 | **Host key signing algorithm** | Decided — [ADR-0001](./adr/0001-asymmetric-host-key-signing.md) | Ed25519 asymmetric signing. Router holds private key; hosts verify with router's public key. |
 | 2 | **Inference Server inside container** | Open | The specific LLM serving software (e.g. llama.cpp server, Ollama, vLLM). Determines the local API protocol the Inference Proxy speaks. |
-| 3 | **Container image integrity verification** | Open | Digest pinning in config vs. a signature scheme (e.g. Sigstore/cosign). Digest pinning is simpler for Phase 1. |
+| 3 | **Container image integrity verification** | Decided — [ADR-0002](./adr/0002-container-image-digest-pinning.md) | Digest pinning via `sha256` digest in config. No fallback to tag-based pull. Signature verification is the upgrade path for later phases. |
 | 4 | **Inference Proxy ↔ Inference Server transport** | Open | HTTP on the Docker bridge vs. a Unix socket. Unix socket avoids opening any network port inside the container but may complicate Docker networking setup. |
 | 5 | **Context-reset mechanism** | Open | Depends on the chosen Inference Server. Some support an explicit `/reset` endpoint; others require a fresh process. This determines whether the container must be restarted between sessions. |
 | 6 | **Re-registration identity** | Open | When the Host Agent restarts, how does it prove to the router it is the same host (to reclaim its slot) vs. a new host? Public/private keypair on the host machine is a natural answer. |
