@@ -73,10 +73,10 @@ The single point of entry for incoming LLMUser connections. Responsibilities:
 
 A thin forwarding layer between the Session Manager and the container's Inference Server. Responsibilities:
 
-- Forward prompts from the LLMUser to the Inference Server over a local interface (e.g. HTTP on a loopback or Docker bridge address).
+- Forward prompts from the LLMUser to the llama.cpp server via its `POST /v1/chat/completions` endpoint on the Docker bridge address.
 - Stream responses back to the LLMUser.
 - Apply no transformation to content — it is a transparent pipe.
-- On session teardown, issue a context-reset command to the Inference Server so no conversation history persists.
+- On session teardown, call llama.cpp's slot-erase endpoint (`DELETE /slots/{id}`) to explicitly clear the KV cache before the session lock is released. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
 
 > **Why a proxy rather than a direct connection?**
 > Placing an explicit proxy layer here means future phases can inject policy (content filtering in Phase 3, structured tool-call parsing in Phase 2) without changing the Session Manager or the container internals.
@@ -86,8 +86,8 @@ A thin forwarding layer between the Session Manager and the container's Inferenc
 Owns the Docker container lifecycle. Responsibilities:
 
 - Pull and verify the container image on first run using **digest pinning**: the image reference in config must include a `sha256` digest (e.g. `registry/image@sha256:<digest>`), and the Docker daemon enforces the match before the container starts. If the digest-qualified pull fails for any reason, startup is aborted — there is no fallback to a tag-based pull. See [ADR-0002](./adr/0002-container-image-digest-pinning.md).
-- Start the container with the hardened configuration described in §4.
-- Poll the Inference Server's health endpoint until it is ready, then signal the Session Manager.
+- Start the container with the hardened configuration described in §4. The container is a **keep-alive** instance — it starts with the Host Agent and remains running across sessions. It is not recreated per session. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
+- Poll the llama.cpp health endpoint (`GET /health`) until it returns ready, then signal the Session Manager.
 - Monitor the container process; escalate to a fatal error if it exits unexpectedly.
 - On shutdown, send a graceful stop signal to the container, wait for it to exit, then remove it.
 
@@ -202,7 +202,9 @@ The container is started by the Container Manager with these constraints enforce
 
 ### 5.4 Session Isolation
 
-Between sessions, the Inference Proxy sends a context-reset instruction to the Inference Server. The container itself remains running (avoiding restart overhead), but the in-memory conversation state inside it is wiped. If the Inference Server does not confirm the reset, the Session Manager must treat the container as tainted and instruct the Container Manager to restart it before accepting a new session.
+The container remains running between sessions (keep-alive). Between sessions, the Inference Proxy calls llama.cpp's slot-erase endpoint (`DELETE /slots/0` for the single Phase 1 slot) to explicitly wipe the KV cache. The model has no memory of the previous session's tokens once this call succeeds.
+
+If the slot-erase call does not return success, the Session Manager treats the container as tainted and instructs the Container Manager to restart it. The Host Agent must not accept a new session until either the erase is confirmed or the container has been restarted clean. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
 
 ---
 
@@ -238,8 +240,8 @@ These are decisions that must be made before implementation but are not resolved
 | # | Question | Status | Notes |
 |---|----------|--------|-------|
 | 1 | **Host key signing algorithm** | Decided — [ADR-0001](./adr/0001-asymmetric-host-key-signing.md) | Ed25519 asymmetric signing. Router holds private key; hosts verify with router's public key. |
-| 2 | **Inference Server inside container** | Open | The specific LLM serving software (e.g. llama.cpp server, Ollama, vLLM). Determines the local API protocol the Inference Proxy speaks. |
+| 2 | **Inference Server inside container** | Decided — [ADR-0003](./adr/0003-llmcpp-shared-container.md) | llama.cpp server. Shared keep-alive container, single slot (`--parallel 1`) in Phase 1. |
 | 3 | **Container image integrity verification** | Decided — [ADR-0002](./adr/0002-container-image-digest-pinning.md) | Digest pinning via `sha256` digest in config. No fallback to tag-based pull. Signature verification is the upgrade path for later phases. |
 | 4 | **Inference Proxy ↔ Inference Server transport** | Open | HTTP on the Docker bridge vs. a Unix socket. Unix socket avoids opening any network port inside the container but may complicate Docker networking setup. |
-| 5 | **Context-reset mechanism** | Open | Depends on the chosen Inference Server. Some support an explicit `/reset` endpoint; others require a fresh process. This determines whether the container must be restarted between sessions. |
+| 5 | **Context-reset mechanism** | Decided — [ADR-0003](./adr/0003-llmcpp-shared-container.md) | llama.cpp `DELETE /slots/{id}` slot-erase endpoint. Container restart as fallback if erase fails. |
 | 6 | **Re-registration identity** | Open | When the Host Agent restarts, how does it prove to the router it is the same host (to reclaim its slot) vs. a new host? Public/private keypair on the host machine is a natural answer. |
