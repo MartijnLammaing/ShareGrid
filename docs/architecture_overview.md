@@ -249,8 +249,17 @@ The following table summarises how later phases extend the architecture. These c
 **Direct User ↔ Host connection (no router proxy)**
 The router only brokers the initial handshake. All inference traffic flows directly between user and host. This keeps the router lightweight and prevents it from becoming a bottleneck or a privacy risk as the network grows.
 
-**Router-issued host keys**
-Rather than a full PKI in Phase 1, the router issues a signed token to each host on registration. The user receives this token in the host list and presents it when opening a session. This allows the host to verify that the connecting user has been through the router without the router needing to be online during the session.
+**Router-issued host keys (ADR-0001)**
+Rather than a full PKI in Phase 1, the router issues an Ed25519-signed token to each host on registration. The user receives this token in the host list and presents it when opening a session. The host verifies it against the router's public key — no router involvement needed at session time.
+
+**Digest-pinned container image (ADR-0002)**
+The LLMHost image is pinned by `sha256` digest in the host configuration. Docker enforces the check natively before the container starts; a mismatch is a fatal error. This makes image updates deliberate and auditable without requiring external tooling.
+
+**llama.cpp in a shared keep-alive container (ADR-0003)**
+Weights are loaded once at container start rather than per session. A slot-erase call clears the KV cache after each session; the container restarts if the erase cannot be confirmed. This eliminates per-session startup latency and keeps memory cost fixed.
+
+**All host logic inside the Docker container (ADR-0005)**
+The router client, session manager, and inference proxy run inside the same container as llama.cpp. The host operator's only action is a single `docker run`; no bind mounts or separate host-side processes are required. Each container restart generates a new ephemeral TLS keypair and re-registers with the router.
 
 **Stateless session teardown**
 The LLMHost destroys all session context after a session ends. This is a security requirement to prevent cross-session information leakage, and is foundational for Phase 4's multi-user model.
