@@ -60,6 +60,7 @@ The single point of entry for incoming LLMUser connections. Responsibilities:
 - Validate the **host key** presented by the connecting LLMUser against the current token pair (current + previous) before any inference traffic is allowed (see §5.2).
 - Reject connections when: (a) the session slot is occupied, (b) router registration is not confirmed, or (c) key validation fails.
 - Hand off a validated session to the Inference Proxy.
+- Maintain an **idle timer** that resets each time a prompt is received. If no prompt arrives within 30 minutes, the Session Manager closes the session and triggers normal teardown. The LLMUser receives a timeout error on the connection.
 - Coordinate session teardown: instruct the Inference Proxy to flush the llama.cpp slot, then release the session lock.
 - On slot-erase failure, exit the container with a non-zero code — Docker's `--restart=on-failure` policy will restart it and trigger a clean re-registration.
 
@@ -152,6 +153,7 @@ sequenceDiagram
 
         loop Conversation turns
             U->>SM: Prompt
+            SM->>SM: Reset idle timer
             SM->>IP: Forward prompt
             IP->>LLM: POST /v1/chat/completions\n(Unix socket)
             LLM-->>IP: Response stream
@@ -159,7 +161,12 @@ sequenceDiagram
             SM-->>U: Response stream
         end
 
-        U->>SM: Close session
+        alt User closes session
+            U->>SM: Close session
+        else Idle timeout (30 min no prompt)
+            SM->>SM: Idle timer expires
+        end
+
         SM->>IP: Teardown: flush session
         IP->>LLM: DELETE /slots/0
         LLM-->>IP: Confirmed
@@ -258,6 +265,7 @@ They do not protect against a **malicious LLMHost operator**. Root on the host c
 | Container exits unexpectedly | Docker `--restart=on-failure` restarts it. Container re-registers as a new host. The host disappears from the router registry until re-registration completes. |
 | Slot-erase fails after session teardown | Session Manager exits the container with a non-zero code. Docker restarts it. Re-registration follows. |
 | Session slot occupied when new connection arrives | Immediate rejection with a "host busy" error. No queue is maintained in Phase 1. |
+| LLMUser goes idle for 30 minutes | Session Manager's idle timer expires. Normal teardown is triggered: llama.cpp slot is flushed, session lock released. LLMUser receives a timeout error on the connection. |
 
 ---
 
