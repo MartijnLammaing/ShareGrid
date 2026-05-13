@@ -47,9 +47,9 @@ Owns the connection to LLMRouter. Responsibilities:
 - Generate an ephemeral TLS keypair at startup. The private key is held in memory only and is never written to disk.
 - Establish the TLS connection to the configured router address.
 - Send the registration payload: model metadata, the Session Manager's listening port, and the TLS cert fingerprint so LLMUsers can pin to it.
-- Receive and store the router-issued **host key** and the **router's Ed25519 public key** in memory.
-- Pass both keys to the Session Manager once registration is confirmed.
-- Emit a heartbeat on a fixed interval to keep the router registry entry alive.
+- Receive and store the router-issued **host key** (as `current_token`) and the **router's Ed25519 public key** in memory.
+- Pass the current host key token and the router public key to the Session Manager once registration is confirmed.
+- Emit a heartbeat on a fixed interval. Each heartbeat response carries a freshly issued host key token from the router; on receipt, rotate: `previous_token ← current_token`, `current_token ← new token`. Notify the Session Manager of the updated token pair. Clear `previous_token` after a 60-second grace period.
 - On router disconnection, attempt reconnection with exponential backoff and signal the Session Manager to stop accepting new sessions until re-registration succeeds.
 
 ### 2.2 Session Manager
@@ -57,7 +57,7 @@ Owns the connection to LLMRouter. Responsibilities:
 The single point of entry for incoming LLMUser connections. Responsibilities:
 
 - Maintain a **session slot** — a binary lock acquired when a session opens and released on teardown. In Phase 1 this enforces the one-session-at-a-time constraint.
-- Validate the **host key** presented by the connecting LLMUser before any inference traffic is allowed (see §5.2).
+- Validate the **host key** presented by the connecting LLMUser against the current token pair (current + previous) before any inference traffic is allowed (see §5.2).
 - Reject connections when: (a) the session slot is occupied, (b) router registration is not confirmed, or (c) key validation fails.
 - Hand off a validated session to the Inference Proxy.
 - Coordinate session teardown: instruct the Inference Proxy to flush the llama.cpp slot, then release the session lock.
@@ -180,6 +180,8 @@ All keys are held **in process memory only**. Nothing is written to disk or to t
 - Any LLMUser holding a token for the previous instance is automatically invalidated and must reconnect through the router.
 - This is intentional: no stale credentials can persist across restarts, and no sensitive material is ever present on the host filesystem.
 
+During normal operation, the Router Client holds two host key tokens in memory at all times: `current_token` (from the most recent heartbeat) and `previous_token` (from the heartbeat before that, retained for a 60-second grace period). Both are passed to the Session Manager and used for token validation. See §5.2.
+
 The Router Client also receives and stores the **router's Ed25519 public key** during registration. This is used by the Session Manager to verify the signature on host keys presented by connecting LLMUsers. The public key may alternatively be pre-configured out-of-band. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md).
 
 ### 5.2 Session Key Validation
@@ -187,8 +189,10 @@ The Router Client also receives and stores the **router's Ed25519 public key** d
 The LLMUser presents the host key verbatim as received from the router. The Session Manager verifies it as follows:
 
 1. **Signature check** — verify the Ed25519 signature using the router's public key. Any token failing this check is rejected immediately.
-2. **Expiry check** — the signed payload includes an expiry timestamp. Expired tokens are rejected.
-3. **Host match check** — the signed payload includes the host identifier. Tokens issued for a different host are rejected.
+2. **Host match check** — the signed payload includes the host identifier. Tokens issued for a different host are rejected.
+3. **Token freshness check** — the presented token must match either `current_token` or `previous_token` held by the Router Client. A match against `previous_token` is only accepted within the 60-second overlap window following the last heartbeat rotation. Any token matching neither is rejected.
+
+The overlap window handles the race condition where a user fetches the host list just before a heartbeat refresh causes the router to issue a new token. See also [`architecture_llmrouter.md`](./architecture_llmrouter.md) §4.3.
 
 All checks fail closed. No partial matches, no fallback paths. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md).
 

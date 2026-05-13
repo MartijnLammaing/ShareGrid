@@ -50,6 +50,7 @@ Owns the router's Ed25519 signing key — the trust anchor for the entire networ
 
 - Hold the Ed25519 private key in memory only. It is never written to disk.
 - On host registration, issue a **host key token**: a signed payload containing the host identifier, the host's TLS cert fingerprint, and an expiry timestamp.
+- On each heartbeat, re-issue a fresh host key token with a new expiry and return it in the heartbeat response. The Host Registry is updated with the new token immediately.
 - Expose the corresponding **Ed25519 public key** to outbound responses so that LLMHosts can verify tokens presented by LLMUsers.
 - Have no external interface; only the TLS Listener may invoke it.
 
@@ -66,15 +67,17 @@ An in-memory map of currently active LLMHosts. Each entry holds:
 | `context_size` | Context window size in tokens |
 | `endpoint` | Host address + port for direct LLMUser connections |
 | `tls_fingerprint` | TLS cert fingerprint for LLMUser cert pinning |
-| `host_key_token` | The signed token issued by the Key Authority |
+| `host_key_token` | The current signed token issued by the Key Authority; refreshed on every heartbeat |
 | `last_seen` | Timestamp of the most recent heartbeat |
 
 Responsibilities:
 
 - Add an entry on successful host registration.
-- Update `last_seen` on each heartbeat.
+- On each heartbeat: update `last_seen` and replace `host_key_token` with the newly issued token.
 - Run a background eviction loop: remove any host whose `last_seen` exceeds the configured heartbeat timeout. An evicted host is immediately absent from the host list returned to LLMUsers.
 - Return the full host list (all non-evicted entries) on request.
+
+> The registry always holds only the *current* token per host. The LLMHost is responsible for retaining the previous token during the overlap window (see §4.3).
 
 ---
 
@@ -101,7 +104,11 @@ sequenceDiagram
 
     loop Heartbeat
         H->>TLS: Heartbeat ping
-        TLS->>HR: Update last_seen
+        TLS->>KA: Request new host key token
+        KA-->>TLS: Fresh signed token
+        TLS->>HR: Update last_seen + replace host_key_token
+        TLS-->>H: New host key token
+        H->>H: Rotate tokens (previous ← current, current ← new)
     end
 
     Note over HR: Background loop evicts hosts<br/>with expired last_seen
@@ -145,7 +152,26 @@ The host key token is an Ed25519-signed payload. The signed content includes:
 
 The token is opaque to both the LLMHost and LLMUser. Its only valid use is presentation — the LLMHost verifies the signature and fields; it does not parse or act on the payload content beyond that. See also [`architecture_overview.md`](./architecture_overview.md) §9 (Router-issued host keys).
 
-### 4.3 Trust Boundary
+### 4.3 Token Refresh and Overlap Window
+
+Host key tokens have a short TTL of `2 × heartbeat_interval` (≈60–90s with default settings). The router re-issues a fresh token on every heartbeat and updates the Host Registry immediately, so LLMUsers always receive a current token when they fetch the host list.
+
+This creates a narrow race condition: a user who receives a token and then takes a moment to select and connect to a host may arrive at the LLMHost holding a token that was valid when fetched but has since been replaced. To handle this without requiring the LLMUser to retry, the LLMHost maintains an **overlap window**:
+
+- The Router Client keeps both the **current token** (just received) and the **previous token** (from the prior heartbeat cycle).
+- The Session Manager accepts either token during the overlap window.
+- The previous token is cleared after a fixed grace period of **60 seconds**, after which only the current token is accepted.
+
+```
+heartbeat N:   current = token_N,   previous = token_N-1  (valid for 60s)
+heartbeat N+1: current = token_N+1, previous = token_N    (valid for 60s)
+```
+
+A user who fetches the host list and connects within the overlap window always succeeds. A user holding a token older than one heartbeat cycle plus the grace period is rejected — they must re-fetch the host list.
+
+The overlap window state (current + previous token, grace period timer) lives entirely on the LLMHost. The router has no awareness of it.
+
+### 4.4 Trust Boundary
 
 The router is a trusted coordinator. It does not observe inference traffic, which limits its exposure to conversation data. Its main attack surface is the TLS listener and the Key Authority's private key.
 
@@ -224,6 +250,6 @@ Notes:
 
 | # | Question | Status | Notes |
 |---|----------|--------|-------|
-| 1 | **Host key token TTL** | Open | Must be long enough to survive a slow handshake; short enough to limit the window for a stolen token. A starting point: 5 minutes from issuance. |
+| 1 | **Host key token TTL** | Decided — see §4.3 | Short TTL of `2 × heartbeat_interval`. Refreshed on every heartbeat. Overlap window of 60s on the LLMHost handles the race between token refresh and user connection. |
 | 2 | **Heartbeat eviction timeout** | Open | Must be longer than the configured heartbeat interval on the LLMHost side (default 30 s). Starting point: `3 × heartbeat_interval`. |
 | 3 | **Ed25519 key provisioning** | Open | Phase 1: generated fresh on each router startup (simplest; consequences documented in §4.1). Alternative: load from a file to survive restarts. Tradeoff: persistent key increases impact of key compromise. |
