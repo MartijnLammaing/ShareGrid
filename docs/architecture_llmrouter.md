@@ -251,5 +251,5 @@ Notes:
 | # | Question | Status | Notes |
 |---|----------|--------|-------|
 | 1 | **Host key token TTL** | Decided — see §4.3 | Short TTL of `2 × heartbeat_interval`. Refreshed on every heartbeat. Overlap window of 60s on the LLMHost handles the race between token refresh and user connection. |
-| 2 | **Heartbeat eviction timeout** | Open | Must be longer than the configured heartbeat interval on the LLMHost side (default 30 s). Starting point: `3 × heartbeat_interval`. |
+| 2 | **Heartbeat eviction timeout** | Decided | `2 × heartbeat_interval` (60s with defaults). Aligns eviction with token expiry — a host is removed from the registry at the same moment its token becomes unusable, preventing stale listings that would cause connection failures on the LLMUser side. |
 | 3 | **Ed25519 key provisioning** | Open | Phase 1: generated fresh on each router startup (simplest; consequences documented in §4.1). Alternative: load from a file to survive restarts. Tradeoff: persistent key increases impact of key compromise. |
