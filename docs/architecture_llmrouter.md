@@ -8,7 +8,7 @@
 
 The LLMRouter has three distinct concerns that must be kept architecturally separate:
 
-1. **Registry authority** — maintain live, in-memory registries of active LLMHost and LLMUser entries; evict stale entries automatically.
+1. **Registry authority** — maintain a live, in-memory registry of active LLMHosts; evict stale entries automatically.
 2. **Key issuance** — be the sole trust anchor for the network; sign host key tokens that LLMUsers present to open sessions.
 3. **Broker, not proxy** — facilitate the initial handshake, then step aside. The router never observes or relays inference traffic.
 
@@ -24,7 +24,6 @@ graph TB
         TLS[TLS Listener]
         KA[Key Authority]
         HR[Host Registry]
-        UR[User Registry]
     end
 
     H([LLMHost]) -- "TLS: register / heartbeat" --> TLS
@@ -33,7 +32,6 @@ graph TB
     TLS -- "sign host key" --> KA
     KA -- "signed host key token" --> TLS
     TLS -- "add / update / evict" --> HR
-    TLS -- "add / evict" --> UR
     HR -- "host list" --> TLS
 ```
 
@@ -78,22 +76,6 @@ Responsibilities:
 - Run a background eviction loop: remove any host whose `last_seen` exceeds the configured heartbeat timeout. An evicted host is immediately absent from the host list returned to LLMUsers.
 - Return the full host list (all non-evicted entries) on request.
 
-### 2.4 User Registry
-
-An in-memory map of currently active LLMUser sessions. Each entry holds:
-
-| Field | Description |
-|-------|-------------|
-| `session_token` | Opaque anonymous token issued at handshake |
-| `last_seen` | Timestamp of the most recent interaction with the router |
-
-Responsibilities:
-
-- Issue a **session token** at handshake and record the entry.
-- Update `last_seen` on each interaction.
-- Evict inactive sessions after the configured inactivity timeout.
-- Support **forced eviction** by an operator: a session token can be invalidated immediately, which causes the next router interaction from that user to be rejected. This is the mechanism for enforcing code of conduct decisions (see §4).
-
 ---
 
 ## 3. Connection Flows
@@ -131,20 +113,14 @@ sequenceDiagram
 sequenceDiagram
     participant U as LLMUser CLI
     participant TLS as TLS Listener
-    participant UR as User Registry
     participant HR as Host Registry
 
     U->>TLS: TLS connect + handshake request
-    TLS->>UR: Create session entry<br/>Issue session token
-    UR-->>TLS: Session token
     TLS->>HR: Fetch current host list
     HR-->>TLS: Active host entries
-    TLS-->>U: Session token + host list<br/>(model metadata, endpoint, tls_fingerprint, host_key_token)
+    TLS-->>U: Host list<br/>(model metadata, endpoint, tls_fingerprint, host_key_token)
 
     Note over U: User selects a host and opens<br/>a direct TLS session — router is no longer involved
-
-    U->>TLS: Session ended (optional notification)
-    TLS->>UR: Evict session entry
 ```
 
 ---
@@ -153,7 +129,7 @@ sequenceDiagram
 
 ### 4.1 Key Authority — Ed25519 Key Storage
 
-The router's Ed25519 private key is held in process memory only and is never written to disk or passed to any other process. Consequences are the same as for LLMHost key storage: a router restart invalidates all previously issued host key tokens and all active session tokens. Hosts must re-register; users must reconnect.
+The router's Ed25519 private key is held in process memory only and is never written to disk or passed to any other process. Consequences are the same as for LLMHost key storage: a router restart invalidates all previously issued host key tokens. Hosts must re-register; users must reconnect.
 
 The router's **public key** is distributed to LLMHosts as part of the registration response. LLMHosts use it to verify the host key token that a LLMUser presents when opening a session. The public key may also be pre-configured out-of-band as a trust anchor.
 
@@ -169,39 +145,7 @@ The host key token is an Ed25519-signed payload. The signed content includes:
 
 The token is opaque to both the LLMHost and LLMUser. Its only valid use is presentation — the LLMHost verifies the signature and fields; it does not parse or act on the payload content beyond that. See also [`architecture_overview.md`](./architecture_overview.md) §9 (Router-issued host keys).
 
-### 4.3 User Authentication — Anonymous Session Tokens
-
-The overview specifies that LLMUsers are authenticated, but does not prescribe a mechanism. **Proposed approach for Phase 1:** anonymous session tokens.
-
-On handshake, the router issues a randomly generated opaque token to the LLMUser — no credentials, no identity, no account. The token:
-
-- Is a cryptographically random 256-bit value.
-- Is stored in the User Registry alongside a `last_seen` timestamp.
-- Has no signature and carries no claims. It is an opaque handle, not a verifiable credential.
-- Is used solely to identify a session for the purpose of forced eviction.
-
-**Why this is sufficient for Phase 1:** the only action the router needs to take against a user is to terminate their router-side session (evict the session token, reject subsequent requests). The user's inference session with the LLMHost is direct and independent; the router cannot terminate it. Forced eviction prevents the user from obtaining a new host list or re-entering the network without reconnecting.
-
-**Code of conduct enforcement flow:**
-
-```mermaid
-sequenceDiagram
-    participant OP as Router Operator
-    participant UR as User Registry
-    participant U as LLMUser CLI
-
-    OP->>UR: Evict session_token (operator action)
-    UR->>UR: Remove session entry
-
-    U->>TLS: Any subsequent request with session_token
-    TLS->>UR: Look up session_token
-    UR-->>TLS: Not found
-    TLS-->>U: Rejected (401)
-```
-
-> This does not terminate an in-flight inference session on the LLMHost — that is a host-side action. The router operator would need to coordinate with the relevant host operator to interrupt an active session. This limitation is acceptable for Phase 1.
-
-### 4.4 Trust Boundary
+### 4.3 Trust Boundary
 
 The router is a trusted coordinator. It does not observe inference traffic, which limits its exposure to conversation data. Its main attack surface is the TLS listener and the Key Authority's private key.
 
@@ -215,7 +159,6 @@ See [`architecture_overview.md`](./architecture_overview.md) §5 for the full sy
 |---------|----------|
 | LLMHost stops heartbeating | Host Registry evicts the entry after the timeout. Host disappears from the list returned to new LLMUser handshakes. No active user sessions are affected — they are direct. |
 | LLMHost reconnects after eviction | Treated as a new registration. Key Authority issues a new host key token. Previous token is invalid (different `host_id` or expired). |
-| LLMUser goes inactive | User Registry evicts the session token after the inactivity timeout. The user must reconnect and perform a new handshake to get a fresh host list. |
 | Router restarts | All registry state is lost. All previously issued host key tokens are invalid (new Ed25519 key generated). All hosts must re-register. All users must reconnect. |
 | Key Authority unavailable (e.g. memory pressure) | Host registration is rejected. No partial state is written. The host retries with backoff per its Router Client logic. |
 
@@ -231,13 +174,41 @@ The router is configured via environment variables on startup.
 | `SHAREGRID_TLS_CERT` | Yes | Path to the router's TLS certificate | `/etc/sharegrid/router.crt` |
 | `SHAREGRID_TLS_KEY` | Yes | Path to the router's TLS private key | `/etc/sharegrid/router.key` |
 | `SHAREGRID_HEARTBEAT_TIMEOUT` | No | Seconds before a host with no heartbeat is evicted. Default: `90` | `90` |
-| `SHAREGRID_SESSION_TIMEOUT` | No | Seconds before an inactive user session is evicted. Default: `300` | `300` |
 
 If any required variable is absent, the router must exit immediately with a clear error rather than starting in a partially configured state.
 
 ---
 
-## 7. Phase Roadmap — LLMRouter Impact
+## 7. Startup Output
+
+On successful startup, the router prints a summary to stdout. Its primary purpose is to give the operator the exact values to supply as `SHAREGRID_ROUTER_URL` when starting LLMHost and LLMUser nodes.
+
+The router enumerates all non-loopback network interfaces and prints a candidate endpoint for each, using the configured port and the `https://` scheme. It also performs a best-effort public IP lookup so operators behind NAT do not need to determine their public IP manually.
+
+Example output:
+
+```
+LLMRouter started.
+
+  Listen address : 0.0.0.0:8443
+
+  Reachable endpoints (use as SHAREGRID_ROUTER_URL):
+    https://203.0.113.7:8443    [public]
+    https://192.168.1.42:8443   [eth0]
+    https://10.0.0.5:8443       [wlan0]
+
+  Copy one of the above into SHAREGRID_ROUTER_URL on each LLMHost and LLMUser.
+```
+
+Notes:
+- Loopback addresses (`127.0.0.1`, `::1`) are excluded — they are not reachable from other machines.
+- If no non-loopback interface is found, the router logs a warning and prints the raw listen address so the operator can still determine the correct value manually.
+- The public IP is resolved at startup by querying a public IP reflection service (e.g. `https://api.ipify.org`). If the lookup fails or times out, the `[public]` line is omitted and a warning is printed — this is non-fatal. The router starts regardless.
+- The output is printed once at startup and not repeated. It is not part of the ongoing log stream.
+
+---
+
+## 8. Phase Roadmap — LLMRouter Impact
 
 | Phase | Change | What it means for LLMRouter |
 |-------|--------|-----------------------------|
@@ -245,16 +216,14 @@ If any required variable is absent, the router must exit immediately with a clea
 | **2** | Structured tool-call responses on the host side | No router changes required. The User ↔ Host channel is direct. |
 | **3** | Controlled internet access for LLMHost | No router changes required. Internet policy is enforced at the container level. |
 | **4** | Multiple simultaneous hosts and users; session reservation | Host Registry must track busy/free status per host. TLS Listener must handle host status update messages. User handshake response must surface host availability. |
-| **Future** | Multiple routers, load balancing, resource accounting | Router becomes a distributed or federated service. Host and User registries need a shared backing store. Key Authority must support key rotation without invalidating all live tokens. |
+| **Future** | Multiple routers, load balancing, resource accounting | Router becomes a distributed or federated service. Host Registry needs a shared backing store. Key Authority must support key rotation without invalidating all live tokens. |
 
 ---
 
-## 8. Open Design Decisions
+## 9. Open Design Decisions
 
 | # | Question | Status | Notes |
 |---|----------|--------|-------|
-| 1 | **User authentication mechanism** | Proposed — see §4.3 | Anonymous session tokens. No identity required. Token is opaque handle for eviction only. |
-| 2 | **Host key token TTL** | Open | Must be long enough to survive a slow handshake; short enough to limit the window for a stolen token. A starting point: 5 minutes from issuance. |
-| 3 | **Heartbeat eviction timeout** | Open | Must be longer than the configured heartbeat interval on the LLMHost side (default 30 s). Starting point: `3 × heartbeat_interval`. |
-| 4 | **Ed25519 key provisioning** | Open | Phase 1: generated fresh on each router startup (simplest; consequences documented in §4.1). Alternative: load from a file to survive restarts. Tradeoff: persistent key increases impact of key compromise. |
-| 5 | **Operator eviction interface** | Open | §4.3 assumes an operator can invoke forced eviction. The mechanism (admin CLI, local HTTP endpoint, signal handler) is unspecified. |
+| 1 | **Host key token TTL** | Open | Must be long enough to survive a slow handshake; short enough to limit the window for a stolen token. A starting point: 5 minutes from issuance. |
+| 2 | **Heartbeat eviction timeout** | Open | Must be longer than the configured heartbeat interval on the LLMHost side (default 30 s). Starting point: `3 × heartbeat_interval`. |
+| 3 | **Ed25519 key provisioning** | Open | Phase 1: generated fresh on each router startup (simplest; consequences documented in §4.1). Alternative: load from a file to survive restarts. Tradeoff: persistent key increases impact of key compromise. |
