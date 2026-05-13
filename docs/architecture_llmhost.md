@@ -279,16 +279,3 @@ They do not protect against a **malicious LLMHost operator**. Root on the host c
 | **3** | Controlled internet access | Container networking gains a filtered egress proxy. The startup script must configure the container's DNS and routing through that proxy. No egress outside the allowed list. |
 | **4** | Multiple simultaneous sessions | Session Manager's binary session slot becomes a capacity counter or queue. Router Client must report current load. `--parallel N` in llama.cpp expands slot count. |
 | **Future** | Resource accounting | A metering layer inside the container tracks token throughput and reports to the router. |
-
----
-
-## 8. Open Design Decisions
-
-| # | Question | Status | Notes |
-|---|----------|--------|-------|
-| 1 | **Host key signing algorithm** | Decided — [ADR-0001](./adr/0001-asymmetric-host-key-signing.md) | Ed25519 asymmetric signing. Router holds private key; hosts verify with router's public key. |
-| 2 | **Inference Server inside container** | Decided — [ADR-0003](./adr/0003-llmcpp-shared-container.md) | llama.cpp server. Shared keep-alive container, single slot (`--parallel 1`) in Phase 1. |
-| 3 | **Container image integrity verification** | Decided — [ADR-0002](./adr/0002-container-image-digest-pinning.md) | Digest pinning via `sha256` digest. No fallback to tag-based pull. |
-| 4 | **Inference Proxy ↔ Inference Server transport** | Decided — [ADR-0005](./adr/0005-host-agent-inside-container.md) | Internal Unix socket within the container. No bind mount required. |
-| 5 | **Context-reset mechanism** | Decided — [ADR-0003](./adr/0003-llmcpp-shared-container.md) | llama.cpp `DELETE /slots/0`. Container exit + Docker restart as fallback. |
-| 6 | **Re-registration identity** | Decided — [ADR-0005](./adr/0005-host-agent-inside-container.md) | Each restart is a new host. No persistent identity. Router accepts any valid re-registration. |

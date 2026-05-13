@@ -264,13 +264,3 @@ Notes:
 | **3** | Controlled internet access for LLMHost | No router changes required. Internet policy is enforced at the container level. |
 | **4** | Multiple simultaneous hosts and users; session reservation | Host Registry must track busy/free status per host. TLS Listener must handle host status update messages. User handshake response must surface host availability. |
 | **Future** | Multiple routers, load balancing, resource accounting | Router becomes a distributed or federated service. Host Registry needs a shared backing store. Key Authority must support key rotation without invalidating all live tokens. |
-
----
-
-## 9. Open Design Decisions
-
-| # | Question | Status | Notes |
-|---|----------|--------|-------|
-| 1 | **Host key token TTL** | Decided — see §4.3 | Short TTL of `2 × heartbeat_interval`. Refreshed on every heartbeat. Overlap window of 60s on the LLMHost handles the race between token refresh and user connection. |
-| 2 | **Heartbeat eviction timeout** | Decided | `2 × heartbeat_interval` (60s with defaults). Aligns eviction with token expiry — a host is removed from the registry at the same moment its token becomes unusable, preventing stale listings that would cause connection failures on the LLMUser side. |
-| 3 | **Ed25519 key provisioning** | Decided | Generated fresh on each router startup. All previously issued tokens are invalidated on restart; hosts must re-register and users must reconnect. See §4.1. |
