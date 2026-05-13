@@ -37,6 +37,7 @@ graph TB
 
 Handles the connection to the LLMRouter. Responsibilities:
 
+- Parse the `fp` query parameter from `SHAREGRID_ROUTER_URL` and pin the TLS connection to that fingerprint when connecting to the router.
 - Establish a TLS connection to the configured router endpoint.
 - Request the host list and return it to the CLI.
 - Close the router connection once the host list is received — the router is not involved after this point.

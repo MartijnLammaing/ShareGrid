@@ -29,7 +29,9 @@ graph TB
     end
 
     subgraph Router Infrastructure
-        R[LLMRouter<br/>Registry + Auth]
+        subgraph Docker Container
+            R[LLMRouter<br/>Registry + Auth]
+        end
     end
 
     subgraph Host Machine
@@ -183,6 +185,8 @@ The Docker container running the LLMHost must be configured with:
 
 ### LLMRouter
 
+- Runs as a Docker container; this is a deployment convenience (dependency isolation, consistent operator experience), not a security requirement — unlike LLMHost, the router runs no untrusted code
+- Manages its own TLS certificate internally; the cert is written to a fixed path inside the container and its fingerprint is embedded in the connection URL the operator distributes
 - Maintains an in-memory registry of connected LLMHosts and their metadata (model name, endpoint address, host key)
 - Maintains an in-memory registry of active LLMUser sessions
 - Issues signed host keys to LLMHosts on registration

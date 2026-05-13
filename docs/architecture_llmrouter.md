@@ -16,7 +16,9 @@ The LLMRouter has three distinct concerns that must be kept architecturally sepa
 
 ## 2. Internal Component Structure
 
-The LLMRouter is a single, stateless process (stateless about conversation content; stateful about registrations). It exposes one TLS endpoint that both LLMHosts and LLMUsers connect to.
+The LLMRouter is a single, stateless process (stateless about conversation content; stateful about registrations). It exposes one TLS endpoint that both LLMHosts and LLMUsers connect to. It runs as a Docker container — this is a deployment convenience (dependency isolation, consistent launch pattern across the network), not a security requirement. Unlike LLMHost, the router runs no untrusted code, so extensive hardening is not necessary.
+
+The router manages its own TLS certificate. On first startup it generates a self-signed cert and writes it to a fixed internal path (`/data/certs`). Subsequent startups load the existing cert — the fingerprint stays stable across `docker stop`/`docker start` cycles. The fingerprint is embedded in the connection URL printed at startup (see §7); operators distribute that URL through a trusted channel, which is the only out-of-band step required.
 
 ```mermaid
 graph TB
@@ -197,11 +199,28 @@ The router is configured via environment variables on startup.
 | Variable | Required | Description | Example |
 |----------|:--------:|-------------|---------|
 | `SHAREGRID_LISTEN_ADDR` | Yes | Address and port the TLS Listener binds to | `0.0.0.0:8443` |
-| `SHAREGRID_TLS_CERT` | Yes | Path to the router's TLS certificate | `/etc/sharegrid/router.crt` |
-| `SHAREGRID_TLS_KEY` | Yes | Path to the router's TLS private key | `/etc/sharegrid/router.key` |
 | `SHAREGRID_HEARTBEAT_TIMEOUT` | No | Seconds before a host with no heartbeat is evicted. Default: `90` | `90` |
 
+The TLS certificate and private key are managed internally. They are stored at a fixed path inside the container (`/data/certs/router.crt` and `/data/certs/router.key`). No operator-supplied cert configuration is needed or accepted.
+
 If any required variable is absent, the router must exit immediately with a clear error rather than starting in a partially configured state.
+
+### 6.1 Docker Deployment
+
+The router is packaged and distributed as a Docker image. A minimal `docker run` invocation:
+
+```
+docker run \
+  -p 8443:8443 \
+  -e SHAREGRID_LISTEN_ADDR=0.0.0.0:8443 \
+  registry/llmrouter@sha256:<digest>
+```
+
+The router generates a self-signed TLS cert on first startup and writes it to `/data/certs` inside the container. No volume mount is required.
+
+**Restart behaviour:** `docker stop`/`docker start` preserves the container's writable layer, so the cert and fingerprint survive across those restarts. Removing and recreating the container (e.g. on an image update) generates a new cert and a new fingerprint — the connection URL must be redistributed. This is consistent with the existing disruption of a full container recreation: the Ed25519 key is also lost, requiring all hosts to re-register and all users to reconnect.
+
+Unlike LLMHost, no paranoid hardening flags are required. Standard practice applies: run as a non-root user, publish only the listen port, use a digest-pinned image reference.
 
 ---
 
@@ -217,16 +236,18 @@ Example output:
 LLMRouter started.
 
   Listen address : 0.0.0.0:8443
+  TLS fingerprint: sha256:a3f1c2d4e5b6...
 
   Reachable endpoints (use as SHAREGRID_ROUTER_URL):
-    https://203.0.113.7:8443    [public]
-    https://192.168.1.42:8443   [eth0]
-    https://10.0.0.5:8443       [wlan0]
+    https://203.0.113.7:8443?fp=sha256:a3f1c2d4e5b6...    [public]
+    https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...   [eth0]
+    https://10.0.0.5:8443?fp=sha256:a3f1c2d4e5b6...       [wlan0]
 
   Copy one of the above into SHAREGRID_ROUTER_URL on each LLMHost and LLMUser.
 ```
 
 Notes:
+- The `fp` query parameter contains the SHA-256 fingerprint of the router's TLS certificate. Clients parse it from the URL and pin the TLS connection to it — no separate cert distribution is needed.
 - Loopback addresses (`127.0.0.1`, `::1`) are excluded — they are not reachable from other machines.
 - If no non-loopback interface is found, the router logs a warning and prints the raw listen address so the operator can still determine the correct value manually.
 - The public IP is resolved at startup by querying a public IP reflection service (e.g. `https://api.ipify.org`). If the lookup fails or times out, the `[public]` line is omitted and a warning is printed — this is non-fatal. The router starts regardless.

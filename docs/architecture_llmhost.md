@@ -45,6 +45,7 @@ graph TB
 Owns the connection to LLMRouter. Responsibilities:
 
 - Generate an ephemeral TLS keypair at startup. The private key is held in memory only and is never written to disk.
+- Parse the `fp` query parameter from `SHAREGRID_ROUTER_URL` and pin the TLS connection to that fingerprint when connecting to the router.
 - Establish the TLS connection to the configured router address.
 - Send the registration payload: model metadata, the Session Manager's listening port, and the TLS cert fingerprint so LLMUsers can pin to it.
 - Receive and store the router-issued **host key** (as `current_token`) and the **router's Ed25519 public key** in memory.
