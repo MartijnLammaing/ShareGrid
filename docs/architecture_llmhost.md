@@ -45,13 +45,13 @@ graph TB
 Owns the connection to LLMRouter. Responsibilities:
 
 - Generate an ephemeral TLS keypair at startup. The private key is held in memory only and is never written to disk.
-- Parse the `fp` query parameter from `SHAREGRID_ROUTER_URL` and pin the TLS connection to that fingerprint when connecting to the router.
+- Parse the `fp` query parameter from `SHAREGRID_ROUTER_URL` and pin the TLS connection to that fingerprint when connecting to the router. The `fp` value is a SHA-256 hex fingerprint prefixed with `sha256:` (e.g. `sha256:a3f1c2d4e5b6...`), matching the format printed by the router at startup (see [`architecture_llmrouter.md`](./architecture_llmrouter.md) §7).
 - Establish the TLS connection to the configured router address.
 - Send the registration payload: model metadata, the Session Manager's listening port, and the TLS cert fingerprint so LLMUsers can pin to it.
 - Receive and store the router-issued **host key** (as `current_token`) and the **router's Ed25519 public key** in memory.
 - Pass the current host key token and the router public key to the Session Manager once registration is confirmed.
 - Emit a heartbeat on a fixed interval. Each heartbeat response carries a freshly issued host key token from the router; on receipt, rotate: `previous_token ← current_token`, `current_token ← new token`. Notify the Session Manager of the updated token pair. Clear `previous_token` after a 60-second grace period.
-- On router disconnection, attempt reconnection with exponential backoff and signal the Session Manager to stop accepting new sessions until re-registration succeeds.
+- On router disconnection, attempt reconnection with exponential backoff (initial delay 1 s, doubling on each attempt, capped at 60 s) and signal the Session Manager to stop accepting new sessions until re-registration succeeds.
 
 ### 2.2 Session Manager
 
@@ -218,7 +218,7 @@ The Router Client also receives and stores the **router's Ed25519 public key** d
 
 ### 5.2 Session Key Validation
 
-The LLMUser presents the host key verbatim as received from the router. The Session Manager verifies it as follows:
+The LLMUser presents the host key verbatim as received from the router. The token format is a dot-separated base64url-encoded payload and Ed25519 signature — see [`architecture_llmrouter.md`](./architecture_llmrouter.md) §4.2 for the full wire format specification. The Session Manager verifies it as follows:
 
 1. **Signature check** — verify the Ed25519 signature using the router's public key. Any token failing this check is rejected immediately.
 2. **Host match check** — the signed payload includes the host identifier. Tokens issued for a different host are rejected.
@@ -303,7 +303,7 @@ They do not protect against a **malicious LLMHost operator**. Root on the host c
 
 | Failure | Response |
 |---------|----------|
-| Router connection lost (no active session) | Router Client attempts reconnection with exponential backoff. Session slot remains closed until re-registration succeeds. |
+| Router connection lost (no active session) | Router Client attempts reconnection with exponential backoff (1 s → 2 s → 4 s … capped at 60 s). Session slot remains closed until re-registration succeeds. |
 | Router connection lost (during active session) | Active session is allowed to complete. New sessions are rejected until re-registration succeeds. |
 | Container exits unexpectedly | Docker `--restart=on-failure` restarts it. Container re-registers as a new host. The host disappears from the router registry until re-registration completes. |
 | Slot-erase fails after session teardown | Session Manager exits the container with a non-zero code. Docker restarts it. Re-registration follows. |
