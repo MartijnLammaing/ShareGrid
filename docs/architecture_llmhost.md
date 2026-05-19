@@ -65,6 +65,18 @@ The single point of entry for incoming LLMUser connections. Responsibilities:
 - Coordinate session teardown: instruct the Inference Proxy to flush the llama.cpp slot, then release the session lock.
 - On slot-erase failure, exit the container with a non-zero code — Docker's `--restart=on-failure` policy will restart it and trigger a clean re-registration.
 
+#### Session protocol
+
+The Session Manager exposes a raw **TLS server** using the ephemeral TLS keypair. The LLMUser ↔ LLMHost session uses the same newline-delimited JSON framing as Router ↔ Host connections (see `implementation_guidelines.md` §6 and §6.1):
+
+- On connection, the LLMUser sends a `session_open` message carrying the host key token.
+- The Session Manager responds with `session_ack` (accepted) or `session_reject` (slot occupied, invalid token, or router not registered).
+- Prompts are sent as `prompt` messages. Each prompt produces one or more `response_chunk` messages followed by a single `response_end`.
+- Either party may send `session_close` to end the session gracefully.
+- If the idle timer expires, the Session Manager sends `session_timeout` and closes the connection.
+
+The session slot is tied to the **TLS connection**: acquired on `session_ack`, released when the connection closes.
+
 ### 2.3 Inference Proxy
 
 A thin forwarding layer between the Session Manager and llama.cpp. Responsibilities:
@@ -73,6 +85,8 @@ A thin forwarding layer between the Session Manager and llama.cpp. Responsibilit
 - Stream responses back to the LLMUser.
 - Apply no transformation to content — it is a transparent pipe.
 - On session teardown, call llama.cpp's `DELETE /slots/0` endpoint to explicitly wipe the KV cache before the session lock is released. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
+
+The Inference Proxy uses Node.js's built-in `http.request` with `socketPath: '/tmp/llama.sock'` to communicate with llama.cpp. This is the fixed, internal path used by llama.cpp inside the container; it is not configurable at runtime.
 
 > **Why a proxy rather than a direct connection?**
 > Keeping an explicit proxy layer means future phases can inject policy — content filtering (Phase 3), structured tool-call parsing (Phase 2) — without changing the Session Manager or llama.cpp.
@@ -104,7 +118,13 @@ If any required runtime variable is absent, the container must exit immediately 
 
 ### 2.4 llama.cpp (Inference Server)
 
-Runs the LLM model and serves the inference API. Configured with `--parallel 1` in Phase 1 (single slot). Communicates with the Inference Proxy exclusively via an internal Unix socket — no network port is opened for this channel. See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
+Runs the LLM model and serves the inference API. Phase 1 configuration:
+
+- `--unix-socket /tmp/llama.sock` — listens on an internal Unix socket only; no network port is opened for this channel.
+- `--parallel 1` — single inference slot; enforces one active request at a time.
+- **CPU-only** — no CUDA, Metal, or ROCm support in Phase 1. GPU support is a later-phase concern.
+
+See [ADR-0003](./adr/0003-llmcpp-shared-container.md).
 
 ---
 
@@ -188,6 +208,10 @@ All keys are held **in process memory only**. Nothing is written to disk or to t
 - Any LLMUser holding a token for the previous instance is automatically invalidated and must reconnect through the router.
 - This is intentional: no stale credentials can persist across restarts, and no sensitive material is ever present on the host filesystem.
 
+#### TLS certificate generation
+
+The ephemeral self-signed TLS certificate is generated at process startup using the **`selfsigned`** npm package. Node.js has no built-in API for X.509 certificate generation; `selfsigned` wraps Node.js's own `crypto` primitives to produce a PEM-encoded cert and key without introducing any third-party cryptographic implementation. It is listed as a permitted runtime dependency in `implementation_guidelines.md` §13.
+
 During normal operation, the Router Client holds two host key tokens in memory at all times: `current_token` (from the most recent heartbeat) and `previous_token` (from the heartbeat before that, retained for a 60-second grace period). Both are passed to the Session Manager and used for token validation. See §5.2.
 
 The Router Client also receives and stores the **router's Ed25519 public key** during registration. This is used by the Session Manager to verify the signature on host keys presented by connecting LLMUsers. The public key may alternatively be pre-configured out-of-band. See [ADR-0001](./adr/0001-asymmetric-host-key-signing.md).
@@ -208,7 +232,25 @@ All checks fail closed. No partial matches, no fallback paths. See [ADR-0001](./
 
 Hardening is split across two layers. The image enforces as much as possible by default so that a `docker run` with no hardening flags still has a reasonable baseline. The remaining constraints must be supplied by the operator at run time.
 
-The actual Dockerfile is deferred to the implementation phase. This section specifies what it must contain.
+#### Dockerfile structure
+
+The Dockerfile uses a **three-stage build**:
+
+**Stage 1 — llama.cpp builder**
+
+Base image: `debian:12-slim`. Installs build tools (`build-essential`, `cmake`). Clones llama.cpp at a pinned git tag and builds a CPU-only `llama-server` binary. No CUDA or GPU libraries are included in Phase 1.
+
+**Stage 2 — Node.js builder**
+
+Base image: `node:22-slim`. Runs `npm ci` and `npm run build` (esbuild) to produce `dist/bundle.cjs`. The `node_modules` directory is not copied to the final stage.
+
+**Stage 3 — runtime**
+
+Base image: `gcr.io/distroless/nodejs22-debian12`. Copies only:
+- `/app/llama-server` from Stage 1
+- `/app/bundle.cjs` from Stage 2
+
+No shell, no package manager, no debugging tools are present in the final image.
 
 #### Image-level hardening (Dockerfile)
 

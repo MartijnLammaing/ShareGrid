@@ -27,6 +27,8 @@ Four repositories under the same GitHub organisation:
 | `sharegrid-host` | LLMHost process + Dockerfile |
 | `sharegrid-user` | LLMUser CLI + Dockerfile |
 
+`sharegrid-shared` is a **foundational Phase 1 deliverable**. All three component repos depend on it for protocol types, crypto helpers, TLS utilities, and typed error classes. Its public interfaces must be defined before component implementation begins. During Phase 1, component repos reference it by file path (see §2.3).
+
 ### 2.1 Per-component repo layout
 
 ```
@@ -223,6 +225,10 @@ All communication between components (Router ↔ Host, Router ↔ User) uses **n
 
 The receiver buffers incoming bytes and parses a message each time it encounters a `\n`. JSON values must not contain literal newlines (use `\n` escape sequences in string values if needed).
 
+### Scope
+
+The newline-delimited JSON framing described in this section applies to **all** component connections: Router ↔ Host, Router ↔ User, and **Host ↔ User**. See §6.1 for the Host ↔ User session message types.
+
 ### Version field
 
 Every message carries a `v` field set to `1` for Phase 1. This allows future phases to introduce new message formats while remaining backward-compatible: a receiver that sees an unknown `v` can reject the connection with a clear error rather than misinterpreting the payload.
@@ -294,6 +300,64 @@ function handleMessage(msg: IncomingMessage): void {
 }
 ```
 
+### 6.1 LLMUser ↔ LLMHost session protocol
+
+The Session Manager is a raw TLS server. The LLMUser ↔ LLMHost session uses the same newline-delimited JSON framing as all other connections. Message types defined in `@sharegrid/shared/protocol.ts`:
+
+```ts
+// Session open — first message from LLMUser after TLS connect
+export interface SessionOpenPayload {
+  v: typeof PROTOCOL_VERSION;
+  type: "session_open";
+  hostKeyToken: string;
+}
+
+// Session accepted — sent by LLMHost
+export interface SessionAck {
+  v: typeof PROTOCOL_VERSION;
+  type: "session_ack";
+}
+
+// Session rejected — sent by LLMHost
+export interface SessionReject {
+  v: typeof PROTOCOL_VERSION;
+  type: "session_reject";
+  reason: "busy" | "invalid_token" | "not_registered";
+}
+
+// Prompt — sent by LLMUser
+export interface PromptPayload {
+  v: typeof PROTOCOL_VERSION;
+  type: "prompt";
+  messages: Array<{ role: string; content: string }>;
+}
+
+// Response chunk — sent by LLMHost, one or more per prompt
+export interface ResponseChunk {
+  v: typeof PROTOCOL_VERSION;
+  type: "response_chunk";
+  content: string;
+}
+
+// Response complete — sent by LLMHost after the final chunk
+export interface ResponseEnd {
+  v: typeof PROTOCOL_VERSION;
+  type: "response_end";
+}
+
+// Graceful close — either party
+export interface SessionClose {
+  v: typeof PROTOCOL_VERSION;
+  type: "session_close";
+}
+
+// Idle timeout — sent by LLMHost before closing the connection
+export interface SessionTimeout {
+  v: typeof PROTOCOL_VERSION;
+  type: "session_timeout";
+}
+```
+
 ---
 
 ## 7. Testing
@@ -358,6 +422,8 @@ All gates must pass before a PR can be merged.
 ## 8. Build
 
 Each component repo uses `esbuild` to bundle `src/` into a single `dist/bundle.cjs` before the Docker image is built. This eliminates `node_modules` from the image layer. For local development, `tsx` runs TypeScript directly without a build step.
+
+> **`sharegrid-host` Dockerfile** uses a three-stage build: (1) a llama.cpp builder stage (Debian slim + cmake, CPU-only, pinned git tag), (2) a Node.js builder stage (esbuild bundle), and (3) the distroless runtime stage. Only `dist/bundle.cjs` and the `llama-server` binary are copied into the final image. See `architecture_llmhost.md` §5.3 for the full specification.
 
 ```json
 // package.json scripts
@@ -491,5 +557,6 @@ Rules:
 - **Component repos**: minimal. Permitted runtime dependencies for Phase 1:
   - `zod` — configuration validation
   - `pino` — structured logging
+  - `selfsigned` (`sharegrid-host` only) — self-signed X.509 certificate generation at runtime. Node.js has no built-in API for this; `selfsigned` wraps Node.js's own `crypto` primitives and introduces no third-party cryptographic implementation.
 - No dependency is added without a clear justification. Prefer the Node.js stdlib. Any new dependency requires a note in the PR description explaining why the stdlib is insufficient.
 - `esbuild`, `tsx`, `vitest`, `eslint`, `prettier`, and `typescript` are dev dependencies only — they never appear in the bundled output.

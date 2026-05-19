@@ -148,9 +148,25 @@ The host key token is an Ed25519-signed payload. The signed content includes:
 
 | Field | Purpose |
 |-------|---------|
-| `host_id` | Ties the token to a specific host; LLMHost rejects tokens issued for a different host |
-| `tls_fingerprint` | The host's TLS cert fingerprint; LLMUser pins to this before presenting the token |
-| `expires_at` | UTC timestamp; LLMHost rejects expired tokens |
+| `hostId` | Ties the token to a specific host; LLMHost rejects tokens issued for a different host |
+| `tlsFingerprint` | The host's TLS cert fingerprint; LLMUser pins to this before presenting the token |
+| `expiresAt` | Unix epoch milliseconds; LLMHost rejects expired tokens |
+
+#### Wire format
+
+The token is serialized as a dot-separated two-part string:
+
+```
+base64url(JSON.stringify(payload)) + "." + base64url(ed25519_signature)
+```
+
+Example payload (before encoding):
+
+```json
+{ "hostId": "host_abc123", "tlsFingerprint": "sha256:a3f1c2...", "expiresAt": 1716148800000 }
+```
+
+The signature is computed over the base64url-encoded payload string (the first part), not over the raw JSON.
 
 The token is opaque to both the LLMHost and LLMUser. Its only valid use is presentation — the LLMHost verifies the signature and fields; it does not parse or act on the payload content beyond that. See also [`architecture_overview.md`](./architecture_overview.md) §9 (Router-issued host keys).
 
