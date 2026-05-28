@@ -179,7 +179,7 @@ Integration tests use real TLS sockets and real timers. Mocks appear only at I/O
 
 | #    | Task                                                                                                                                                                                                                                                                                                                                              | File                          | Status |
 |------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------|:------:|
-| 7-1  | Add GitHub Actions workflow. Triggers: push to any branch, PRs targeting `main`. Steps in order: checkout, set up Node 22, `npm ci`, `npm run typecheck`, `npm run lint`, `npm run test:unit`. Run `npm run test:integration` only when the event is a PR targeting `main`. All gates must pass for the workflow to succeed.                       | `.github/workflows/ci.yml`    | `[ ]`  |
+| 7-1  | Add GitHub Actions workflow. Triggers: push to any branch, PRs targeting `main`. Steps in order: checkout, set up Node 22, `npm ci`, `npm run typecheck`, `npm run lint`, `npm run test:unit`. Run `npm run test:integration` only when the event is a PR targeting `main`. All gates must pass for the workflow to succeed.                       | `.github/workflows/ci.yml`    | `[x]`  |
 
 ---
 
@@ -199,8 +199,8 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 4     | Dockerfile                             | 6     | 6    | 0           | 0       | 0         |
 | 5     | Unit tests                             | 5     | 5    | 0           | 0       | 0         |
 | 6     | Integration tests                      | 5     | 5    | 0           | 0       | 0         |
-| 7     | CI pipeline                            | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                              | **56**| **55**| **0**      | **0**   | **1**     |
+| 7     | CI pipeline                            | 1     | 1    | 0           | 0       | 0         |
+| —     | **Total**                              | **56**| **56**| **0**      | **0**   | **0**     |
 
 ### Notes / blockers
 
