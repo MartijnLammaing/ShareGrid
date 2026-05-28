@@ -190,10 +190,10 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 3C    | CLI                                    | 7     | 7    | 0           | 0       | 0         |
 | 3D    | Entry point                            | 2     | 2    | 0           | 0       | 0         |
 | 4     | Dockerfile                             | 3     | 3    | 0           | 0       | 0         |
-| 5     | Unit tests                             | 4     | 0    | 0           | 0       | 4         |
+| 5     | Unit tests                             | 4     | 4    | 0           | 0       | 0         |
 | 6     | Integration tests                      | 5     | 0    | 0           | 0       | 5         |
 | 7     | CI pipeline                            | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                              | **42**| **32**| **0**      | **0**   | **10**    |
+| —     | **Total**                              | **42**| **36**| **0**      | **0**   | **6**     |
 
 ### Notes / blockers
 

@@ -192,10 +192,10 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 3C    | TLS Listener                                   | 8     | 8    | 0           | 0       | 0         |
 | 3D    | Entry point + startup banner                   | 3     | 3    | 0           | 0       | 0         |
 | 4     | Dockerfile                             | 4     | 4    | 0           | 0       | 0         |
-| 5     | Unit tests                                     | 5     | 0    | 0           | 0       | 5         |
+| 5     | Unit tests                             | 5     | 5    | 0           | 0       | 0         |
 | 6     | Integration tests                              | 5     | 0    | 0           | 0       | 5         |
 | 7     | CI pipeline                                    | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                                      | **49**| **38**| **0**      | **0**   | **11**    |
+| —     | **Total**                                      | **49**| **43**| **0**      | **0**   | **6**     |
 
 ### Notes / blockers
 

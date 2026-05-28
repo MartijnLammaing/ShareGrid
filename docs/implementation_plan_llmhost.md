@@ -197,10 +197,10 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 3C    | Inference Proxy                        | 4     | 4    | 0           | 0       | 0         |
 | 3D    | Entry point orchestration              | 2     | 2    | 0           | 0       | 0         |
 | 4     | Dockerfile                             | 6     | 6    | 0           | 0       | 0         |
-| 5     | Unit tests                             | 5     | 0    | 0           | 0       | 5         |
+| 5     | Unit tests                             | 5     | 5    | 0           | 0       | 0         |
 | 6     | Integration tests                      | 5     | 0    | 0           | 0       | 5         |
 | 7     | CI pipeline                            | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                              | **56**| **45**| **0**      | **0**   | **11**    |
+| —     | **Total**                              | **56**| **50**| **0**      | **0**   | **6**     |
 
 ### Notes / blockers
 
