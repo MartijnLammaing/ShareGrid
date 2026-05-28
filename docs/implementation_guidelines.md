@@ -358,6 +358,59 @@ export interface SessionTimeout {
 }
 ```
 
+### 6.2 LLMUser ↔ LLMRouter host-list protocol
+
+The LLMUser fetches the active host list from the LLMRouter using the same newline-delimited JSON framing as every other connection. The exchange is a single request/response: the user opens a TLS connection (pinned to the router's fingerprint), sends one `HostListRequest`, receives one `HostListResponse`, and the router closes the connection. The router is not involved in any subsequent traffic — see `architecture_llmrouter.md` §3.2.
+
+Message types defined in `@sharegrid/shared/protocol.ts`:
+
+```ts
+// Host list request — first and only message from LLMUser after TLS connect
+export interface HostListRequest {
+  v: typeof PROTOCOL_VERSION;
+  type: "host_list_request";
+}
+
+// One entry in the host list returned to LLMUsers
+export interface HostListEntry {
+  hostId: string;
+  modelName: string;
+  contextSize: number;
+  endpoint: string;        // host:port the user connects to directly
+  tlsFingerprint: string;  // sha256:<hex>; user pins TLS to this before opening a session
+  hostKeyToken: string;    // opaque, presented to the host as session credential
+}
+
+// Host list response — sent by LLMRouter, then the router closes the connection
+export interface HostListResponse {
+  v: typeof PROTOCOL_VERSION;
+  type: "host_list_response";
+  hosts: HostListEntry[];
+}
+```
+
+### 6.3 Host key token wire format
+
+The `hostKeyToken` field that appears in `RegistrationAck`, `HeartbeatAck`, `HostListEntry`, and `SessionOpenPayload` is an opaque, dot-separated two-part string:
+
+```
+base64url(JSON.stringify(payload)) + "." + base64url(ed25519_signature)
+```
+
+The signed payload has the shape:
+
+```ts
+export interface HostKeyTokenPayload {
+  hostId: string;
+  tlsFingerprint: string;  // sha256:<hex>
+  expiresAt: number;       // Unix epoch milliseconds
+}
+```
+
+The Ed25519 signature is computed over the **base64url-encoded payload string** (the first part), not over the raw JSON. See `architecture_llmrouter.md` §4.2 for the authoritative specification.
+
+The token is opaque to the LLMUser — it is presented verbatim to the LLMHost without inspection. Encoding and decoding helpers live in `@sharegrid/shared` (see the `crypto` / `token` modules).
+
 ---
 
 ## 7. Testing
@@ -557,6 +610,6 @@ Rules:
 - **Component repos**: minimal. Permitted runtime dependencies for Phase 1:
   - `zod` — configuration validation
   - `pino` — structured logging
-  - `selfsigned` (`sharegrid-host` only) — self-signed X.509 certificate generation at runtime. Node.js has no built-in API for this; `selfsigned` wraps Node.js's own `crypto` primitives and introduces no third-party cryptographic implementation.
+  - `selfsigned` (`sharegrid-host` and `sharegrid-router`) — self-signed X.509 certificate generation. `sharegrid-host` generates an ephemeral cert at every process startup (memory only). `sharegrid-router` generates a cert on first startup and persists it to a fixed internal path so the fingerprint stays stable across `docker stop`/`docker start` cycles (see `architecture_llmrouter.md` §6.1). Node.js has no built-in API for X.509 generation; `selfsigned` wraps Node.js's own `crypto` primitives and introduces no third-party cryptographic implementation.
 - No dependency is added without a clear justification. Prefer the Node.js stdlib. Any new dependency requires a note in the PR description explaining why the stdlib is insufficient.
 - `esbuild`, `tsx`, `vitest`, `eslint`, `prettier`, and `typescript` are dev dependencies only — they never appear in the bundled output.
