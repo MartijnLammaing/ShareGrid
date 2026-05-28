@@ -61,12 +61,12 @@ These tasks live in the `sharegrid-shared` repository. They must be merged befor
 
 | #    | Task                                                                                                                                                                                                                                                                                                                                | File / Location                | Status |
 |------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------|:------:|
-| 1-1  | Initialise repo. `package.json` runtime deps: `@sharegrid/shared` (via `file:../sharegrid-shared`), `zod`, `pino`, `selfsigned`. Dev deps: `esbuild`, `tsx`, `vitest`, `eslint`, `@typescript-eslint/eslint-plugin`, `@typescript-eslint/parser`, `prettier`, `typescript`, `@types/node`, `pino-pretty`. Scripts per `implementation_guidelines.md` §8. | `package.json`                 | `[ ]`  |
-| 1-2  | Add `tsconfig.json` with `strict: true`, `target: ES2022`, `module: NodeNext`, `moduleResolution: NodeNext`, `noUncheckedIndexedAccess: true`. Add `tsconfig.build.json` extending it and excluding `tests/`.                                                                                                                       | `tsconfig.json`, `tsconfig.build.json` | `[ ]`  |
-| 1-3  | Add ESLint config with `@typescript-eslint`. Enforce zero warnings. Disallow `any`. Disallow `console.log` in `src/` (except `console.error` in `config.ts`).                                                                                                                                                                       | `.eslintrc.cjs`                | `[ ]`  |
-| 1-4  | Add Prettier config matching repo defaults (2-space indent, single quotes, trailing comma `all`, `printWidth: 100`).                                                                                                                                                                                                                | `.prettierrc`                  | `[ ]`  |
-| 1-5  | Create empty source-file stubs (each exports a placeholder symbol so imports resolve during early development): `src/index.ts`, `src/config.ts`, `src/logger.ts`, `src/router-client.ts`, `src/session-manager.ts`, `src/inference-proxy.ts`.                                                                                       | `src/*.ts`                     | `[ ]`  |
-| 1-6  | Create empty test directories with a placeholder `.gitkeep`: `tests/unit/`, `tests/integration/`.                                                                                                                                                                                                                                   | `tests/`                       | `[ ]`  |
+| 1-1  | Initialise repo. `package.json` runtime deps: `@sharegrid/shared` (via `file:../sharegrid-shared`), `zod`, `pino`, `selfsigned`. Dev deps: `esbuild`, `tsx`, `vitest`, `eslint`, `@typescript-eslint/eslint-plugin`, `@typescript-eslint/parser`, `prettier`, `typescript`, `@types/node`, `pino-pretty`. Scripts per `implementation_guidelines.md` §8. | `package.json`                 | `[x]`  |
+| 1-2  | Add `tsconfig.json` with `strict: true`, `target: ES2022`, `module: NodeNext`, `moduleResolution: NodeNext`, `noUncheckedIndexedAccess: true`. Add `tsconfig.build.json` extending it and excluding `tests/`.                                                                                                                                       | `tsconfig.json`, `tsconfig.build.json` | `[x]`  |
+| 1-3  | Add ESLint config with `@typescript-eslint`. Enforce zero warnings. Disallow `any`. Disallow `console.log` in `src/` (except `console.error` in `config.ts`).                                                                                                                                                                                       | `.eslintrc.cjs`                | `[x]`  |
+| 1-4  | Add Prettier config matching repo defaults (2-space indent, single quotes, trailing comma `all`, `printWidth: 100`).                                                                                                                                                                                                                                | `.prettierrc`                  | `[x]`  |
+| 1-5  | Create empty source-file stubs (each exports a placeholder symbol so imports resolve during early development): `src/index.ts`, `src/config.ts`, `src/logger.ts`, `src/router-client.ts`, `src/session-manager.ts`, `src/inference-proxy.ts`.                                                                                                       | `src/*.ts`                     | `[x]`  |
+| 1-6  | Create empty test directories with a placeholder `.gitkeep`: `tests/unit/`, `tests/integration/`.                                                                                                                                                                                                                                                   | `tests/`                       | `[x]`  |
 
 ---
 
@@ -190,7 +190,7 @@ Update this table whenever a task changes state. The phase rows are the source o
 | Phase | Title                                  | Total | Done | In progress | Blocked | Remaining |
 |-------|----------------------------------------|:-----:|:----:|:-----------:|:-------:|:---------:|
 | 0     | Prerequisite: `sharegrid-shared`       | 8     | 8    | 0           | 0       | 0         |
-| 1     | Repo scaffolding (`sharegrid-host`)    | 6     | 0    | 0           | 0       | 6         |
+| 1     | Repo scaffolding (`sharegrid-host`)    | 6     | 6    | 0           | 0       | 0         |
 | 2     | Infrastructure modules                 | 3     | 0    | 0           | 0       | 3         |
 | 3A    | Router Client                          | 6     | 0    | 0           | 0       | 6         |
 | 3B    | Session Manager                        | 10    | 0    | 0           | 0       | 10        |
@@ -200,10 +200,11 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 5     | Unit tests                             | 5     | 0    | 0           | 0       | 5         |
 | 6     | Integration tests                      | 5     | 0    | 0           | 0       | 5         |
 | 7     | CI pipeline                            | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                              | **56**| **8**| **0**       | **0**   | **48**    |
+| —     | **Total**                              | **56**| **14**| **0**      | **0**   | **42**    |
 
 ### Notes / blockers
 
+- **Phase 1 complete.** `sharegrid-host` scaffolded at `../sharegrid-host` (commit `1e74e16`). `npm install` clean (engine warnings only — local Node v20.2.0; CI will use v22). `tsc --noEmit` passes with zero errors.
 - **Phase 0 complete.** `sharegrid-shared` shipped as `@sharegrid/shared` v0.1.0 at <https://github.com/MartijnLammaing/sharegrid-shared> (commit `052ed3d`). Verification: `tsc --noEmit` clean, `vitest run tests/unit` → 39/39 passing, production build emits `.js` + `.d.ts` + source maps for all four modules.
 - **S-5 implemented before S-4** because `tls.ts` imports `TlsFingerprintError`. Future plan revisions should reorder these.
 - **`selfsigned`** is included in `sharegrid-shared` as a **dev**Dependency only (used by `tests/unit/tls.test.ts` to generate a real cert for pinned-connect tests). It is not in the runtime bundle, consistent with the zero-runtime-deps policy.
