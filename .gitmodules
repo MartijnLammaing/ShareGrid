@@ -7,6 +7,3 @@
 [submodule "sharegrid-user"]
 	path = sharegrid-user
 	url = git@github.com:MartijnLammaing/sharegrid-user.git
-[submodule "sharegrid-shared"]
-	path = sharegrid-shared
-	url = git@github.com:MartijnLammaing/sharegrid-shared.git
