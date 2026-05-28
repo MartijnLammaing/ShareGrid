@@ -57,12 +57,12 @@ The LLMHost implementation plan defines the bulk of `sharegrid-shared` (tasks S-
 
 | #    | Task                                                                                                                                                                                                                                                                                       | File / Location                | Status |
 |------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------|:------:|
-| 1-1  | Initialise repo. `package.json` runtime deps: `@sharegrid/shared` (via `file:../sharegrid-shared`), `zod`, `pino`, `selfsigned`. Dev deps: `esbuild`, `tsx`, `vitest`, `eslint`, `@typescript-eslint/eslint-plugin`, `@typescript-eslint/parser`, `prettier`, `typescript`, `@types/node`, `pino-pretty`. Scripts per `implementation_guidelines.md` §8. | `package.json`                 | `[ ]`  |
-| 1-2  | Add `tsconfig.json` with `strict: true`, `target: ES2022`, `module: NodeNext`, `moduleResolution: NodeNext`, `noUncheckedIndexedAccess: true`. Add `tsconfig.build.json` extending it and excluding `tests/`.                                                                              | `tsconfig.json`, `tsconfig.build.json` | `[ ]`  |
-| 1-3  | Add ESLint config with `@typescript-eslint`. Enforce zero warnings. Disallow `any`. Disallow `console.log` in `src/` (except `console.error` in `config.ts` and `console.log` in the startup banner module).                                                                              | `.eslintrc.cjs`                | `[ ]`  |
-| 1-4  | Add Prettier config matching repo defaults (2-space indent, single quotes, trailing comma `all`, `printWidth: 100`).                                                                                                                                                                       | `.prettierrc`                  | `[ ]`  |
-| 1-5  | Create empty source-file stubs: `src/index.ts`, `src/config.ts`, `src/logger.ts`, `src/tls-cert-store.ts`, `src/key-authority.ts`, `src/host-registry.ts`, `src/tls-listener.ts`, `src/startup-banner.ts`.                                                                                  | `src/*.ts`                     | `[ ]`  |
-| 1-6  | Create empty test directories with `.gitkeep`: `tests/unit/`, `tests/integration/`.                                                                                                                                                                                                        | `tests/`                       | `[ ]`  |
+| 1-1  | Initialise repo. `package.json` runtime deps: `@sharegrid/shared` (via `file:../sharegrid-shared`), `zod`, `pino`, `selfsigned`. Dev deps: `esbuild`, `tsx`, `vitest`, `eslint`, `@typescript-eslint/eslint-plugin`, `@typescript-eslint/parser`, `prettier`, `typescript`, `@types/node`, `pino-pretty`. Scripts per `implementation_guidelines.md` §8. | `package.json`                 | `[x]`  |
+| 1-2  | Add `tsconfig.json` with `strict: true`, `target: ES2022`, `module: NodeNext`, `moduleResolution: NodeNext`, `noUncheckedIndexedAccess: true`. Add `tsconfig.build.json` extending it and excluding `tests/`.                                                                              | `tsconfig.json`, `tsconfig.build.json` | `[x]`  |
+| 1-3  | Add ESLint config with `@typescript-eslint`. Enforce zero warnings. Disallow `any`. Disallow `console.log` in `src/` (except `console.error` in `config.ts` and `console.log` in the startup banner module).                                                                              | `.eslintrc.cjs`                | `[x]`  |
+| 1-4  | Add Prettier config matching repo defaults (2-space indent, single quotes, trailing comma `all`, `printWidth: 100`).                                                                                                                                                                       | `.prettierrc`                  | `[x]`  |
+| 1-5  | Create empty source-file stubs: `src/index.ts`, `src/config.ts`, `src/logger.ts`, `src/tls-cert-store.ts`, `src/key-authority.ts`, `src/host-registry.ts`, `src/tls-listener.ts`, `src/startup-banner.ts`.                                                                                  | `src/*.ts`                     | `[x]`  |
+| 1-6  | Create empty test directories with `.gitkeep`: `tests/unit/`, `tests/integration/`.                                                                                                                                                                                                        | `tests/`                       | `[x]`  |
 
 ---
 
@@ -185,7 +185,7 @@ Update this table whenever a task changes state. The phase rows are the source o
 | Phase | Title                                          | Total | Done | In progress | Blocked | Remaining |
 |-------|------------------------------------------------|:-----:|:----:|:-----------:|:-------:|:---------:|
 | 0     | Prerequisite: `sharegrid-shared` additions     | 4     | 4    | 0           | 0       | 0         |
-| 1     | Repo scaffolding (`sharegrid-router`)          | 6     | 0    | 0           | 0       | 6         |
+| 1     | Repo scaffolding (`sharegrid-router`)          | 6     | 6    | 0           | 0       | 0         |
 | 2     | Infrastructure modules                         | 4     | 0    | 0           | 0       | 4         |
 | 3A    | Key Authority                                  | 4     | 0    | 0           | 0       | 4         |
 | 3B    | Host Registry                                  | 5     | 0    | 0           | 0       | 5         |
@@ -195,10 +195,11 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 5     | Unit tests                                     | 5     | 0    | 0           | 0       | 5         |
 | 6     | Integration tests                              | 5     | 0    | 0           | 0       | 5         |
 | 7     | CI pipeline                                    | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                                      | **49**| **4**| **0**       | **0**   | **45**    |
+| —     | **Total**                                      | **49**| **10**| **0**      | **0**   | **39**    |
 
 ### Notes / blockers
 
+- **Phase 1 complete.** `sharegrid-router` scaffolded at `../sharegrid-router` (commit `46dc705`). `npm install` clean (engine warnings only). `tsc --noEmit` passes with zero errors. Awaiting GitHub repo creation to push.
 - **Phase 0 complete** as part of the LLMHost Phase 0 work. `sharegrid-shared` is published at <https://github.com/MartijnLammaing/sharegrid-shared> (commit `052ed3d`). All four router-specific shared items (S-9 through S-12) ship alongside the LLMHost items (S-1 through S-8) in the same package.
 - **S-10:** host-key-token helpers landed in `src/crypto.ts` rather than a separate `src/token.ts` module — they sit naturally alongside `signEd25519` / `verifyEd25519` and the `base64url` helpers, with no other reuse case so far.
 - **S-12:** tests for the token wire format live in `tests/unit/crypto.test.ts` (alongside the other crypto helpers) rather than a separate `token.test.ts`.
