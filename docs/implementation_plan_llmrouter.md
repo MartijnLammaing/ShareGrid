@@ -46,10 +46,10 @@ The LLMHost implementation plan defines the bulk of `sharegrid-shared` (tasks S-
 
 | #     | Task                                                                                                                                                                                                                                                                                                                                                                          | File / Location                  | Status |
 |-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------|:------:|
-| S-9   | Add User ↔ Router protocol messages: `HostListRequest` (`type: "host_list_request"`) and `HostListResponse` (`type: "host_list_response"`, contains `hosts: HostListEntry[]`). Define `HostListEntry` interface with `hostId`, `modelName`, `contextSize`, `endpoint`, `tlsFingerprint`, `hostKeyToken`. Every interface includes `v: typeof PROTOCOL_VERSION`.                  | `src/protocol.ts`                | `[ ]`  |
-| S-10  | Add host-key-token wire-format helpers: `encodeHostKeyToken(payload: HostKeyTokenPayload, signature: Buffer): string` (returns `base64url(JSON.stringify(payload)) + "." + base64url(signature)`) and `decodeHostKeyToken(token: string): { payloadB64: string, payload: HostKeyTokenPayload, signature: Buffer }`. Define the `HostKeyTokenPayload` interface (`hostId`, `tlsFingerprint`, `expiresAt`). | `src/crypto.ts` (or new `src/token.ts`) | `[ ]`  |
-| S-11  | Add typed router-side error classes: `RegistrationRejectedError` (`"REGISTRATION_REJECTED"`), `HostNotFoundError` (`"HOST_NOT_FOUND"`), `RouterStartupError` (`"ROUTER_STARTUP_FAILED"`).                                                                                                                                                                                          | `src/errors.ts`                  | `[ ]`  |
-| S-12  | Unit-test the host-key-token wire format. Cases: encode→decode round-trip preserves payload and signature; decode rejects strings without exactly one `.`; decode rejects malformed base64url; signature is computed over the base64url-encoded payload string (matches `architecture_llmrouter.md` §4.2).                                                                       | `tests/unit/token.test.ts`       | `[ ]`  |
+| S-9   | Add User ↔ Router protocol messages: `HostListRequest` (`type: "host_list_request"`) and `HostListResponse` (`type: "host_list_response"`, contains `hosts: HostListEntry[]`). Define `HostListEntry` interface with `hostId`, `modelName`, `contextSize`, `endpoint`, `tlsFingerprint`, `hostKeyToken`. Every interface includes `v: typeof PROTOCOL_VERSION`.                  | `src/protocol.ts`                | `[x]`  |
+| S-10  | Add host-key-token wire-format helpers: `encodeHostKeyToken(payload: HostKeyTokenPayload, signature: Buffer): string` (returns `base64url(JSON.stringify(payload)) + "." + base64url(signature)`) and `decodeHostKeyToken(token: string): { payloadB64: string, payload: HostKeyTokenPayload, signature: Buffer }`. Define the `HostKeyTokenPayload` interface (`hostId`, `tlsFingerprint`, `expiresAt`). **Implementation note:** helpers live in `src/crypto.ts` (not a separate `token.ts` module); `HostKeyTokenPayload` is exported from `src/protocol.ts`. | `src/crypto.ts`                  | `[x]`  |
+| S-11  | Add typed router-side error classes: `RegistrationRejectedError` (`"REGISTRATION_REJECTED"`), `HostNotFoundError` (`"HOST_NOT_FOUND"`), `RouterStartupError` (`"ROUTER_STARTUP_FAILED"`).                                                                                                                                                                                          | `src/errors.ts`                  | `[x]`  |
+| S-12  | Unit-test the host-key-token wire format. Cases: encode→decode round-trip preserves payload and signature; decode rejects strings without exactly one `.`; decode rejects malformed base64url; signature is computed over the base64url-encoded payload string (matches `architecture_llmrouter.md` §4.2). **Implementation note:** tests live in `tests/unit/crypto.test.ts` (alongside the other crypto helpers), not a separate `token.test.ts`. | `tests/unit/crypto.test.ts`      | `[x]`  |
 
 ---
 
@@ -184,7 +184,7 @@ Update this table whenever a task changes state. The phase rows are the source o
 
 | Phase | Title                                          | Total | Done | In progress | Blocked | Remaining |
 |-------|------------------------------------------------|:-----:|:----:|:-----------:|:-------:|:---------:|
-| 0     | Prerequisite: `sharegrid-shared` additions     | 4     | 0    | 0           | 0       | 4         |
+| 0     | Prerequisite: `sharegrid-shared` additions     | 4     | 4    | 0           | 0       | 0         |
 | 1     | Repo scaffolding (`sharegrid-router`)          | 6     | 0    | 0           | 0       | 6         |
 | 2     | Infrastructure modules                         | 4     | 0    | 0           | 0       | 4         |
 | 3A    | Key Authority                                  | 4     | 0    | 0           | 0       | 4         |
@@ -195,11 +195,13 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 5     | Unit tests                                     | 5     | 0    | 0           | 0       | 5         |
 | 6     | Integration tests                              | 5     | 0    | 0           | 0       | 5         |
 | 7     | CI pipeline                                    | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                                      | **49**| **0**| **0**       | **0**   | **49**    |
+| —     | **Total**                                      | **49**| **4**| **0**       | **0**   | **45**    |
 
 ### Notes / blockers
 
-_No notes yet. Record blockers here with the task ID and a one-line description._
+- **Phase 0 complete** as part of the LLMHost Phase 0 work. `sharegrid-shared` is published at <https://github.com/MartijnLammaing/sharegrid-shared> (commit `052ed3d`). All four router-specific shared items (S-9 through S-12) ship alongside the LLMHost items (S-1 through S-8) in the same package.
+- **S-10:** host-key-token helpers landed in `src/crypto.ts` rather than a separate `src/token.ts` module — they sit naturally alongside `signEd25519` / `verifyEd25519` and the `base64url` helpers, with no other reuse case so far.
+- **S-12:** tests for the token wire format live in `tests/unit/crypto.test.ts` (alongside the other crypto helpers) rather than a separate `token.test.ts`.
 
 ---
 

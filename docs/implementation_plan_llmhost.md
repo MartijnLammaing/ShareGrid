@@ -46,14 +46,14 @@ These tasks live in the `sharegrid-shared` repository. They must be merged befor
 
 | #     | Task                                                                                                                                                                                          | File / Location                | Status |
 |-------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------|:------:|
-| S-1   | Initialise `sharegrid-shared` repo: `package.json` (name `@sharegrid/shared`, zero runtime dependencies), `tsconfig.json` (strict mode), `tsconfig.build.json` (excludes `tests/`), `.gitignore`. | repo root                     | `[ ]`  |
-| S-2   | Define all wire-protocol message interfaces and the `PROTOCOL_VERSION = 1` constant. Include: `RegistrationPayload`, `RegistrationAck`, `HeartbeatPayload`, `HeartbeatAck`, `SessionOpenPayload`, `SessionAck`, `SessionReject`, `PromptPayload`, `ResponseChunk`, `ResponseEnd`, `SessionClose`, `SessionTimeout`. Every interface includes `v: typeof PROTOCOL_VERSION` and a `type` discriminant. | `src/protocol.ts`              | `[ ]`  |
-| S-3   | Implement Ed25519 helpers using Node.js built-in `crypto`: `signEd25519(privateKey, payload): Buffer`, `verifyEd25519(publicKey, payload, signature): boolean`. Inputs are `Buffer`/`Uint8Array`; outputs are typed. No third-party crypto. | `src/crypto.ts`                | `[ ]`  |
-| S-4   | Implement TLS utilities: `parseFingerprintFromUrl(url): { host, port, fingerprint }` (extracts `fp=sha256:...` query param), `connectWithPinnedFingerprint(host, port, fingerprintHex): Promise<TLSSocket>` (rejects on mismatch, fails closed), `computeFingerprint(certPem): string` (returns `sha256:<hex>`). | `src/tls.ts`                   | `[ ]`  |
-| S-5   | Define typed error classes — each has a `readonly code` literal: `HostBusyError` (`"HOST_BUSY"`), `InvalidTokenError` (`"INVALID_TOKEN"`), `NotRegisteredError` (`"NOT_REGISTERED"`), `SlotEraseError` (`"SLOT_ERASE_FAILED"`), `ProtocolVersionError` (`"PROTOCOL_VERSION_MISMATCH"`), `TlsFingerprintError` (`"TLS_FINGERPRINT_MISMATCH"`). | `src/errors.ts`                | `[ ]`  |
-| S-6   | Write `index.ts` re-exporting everything from `protocol.ts`, `crypto.ts`, `tls.ts`, `errors.ts`.                                                                                              | `index.ts`                     | `[ ]`  |
-| S-7   | Unit-test `crypto.ts`: sign/verify round-trip succeeds; verify rejects tampered payload; verify rejects with wrong public key; verify rejects malformed signature.                            | `tests/unit/crypto.test.ts`    | `[ ]`  |
-| S-8   | Unit-test `tls.ts`: fingerprint parses correctly from URL; URL missing `fp` query param rejected; `computeFingerprint` produces stable SHA-256 over a known cert; pinned connection rejects mismatching fingerprint. | `tests/unit/tls.test.ts`       | `[ ]`  |
+| S-1   | Initialise `sharegrid-shared` repo: `package.json` (name `@sharegrid/shared`, zero runtime dependencies), `tsconfig.json` (strict mode), `tsconfig.build.json` (excludes `tests/`), `.gitignore`. | repo root                     | `[x]`  |
+| S-2   | Define all wire-protocol message interfaces and the `PROTOCOL_VERSION = 1` constant. Include: `RegistrationPayload`, `RegistrationAck`, `HeartbeatPayload`, `HeartbeatAck`, `SessionOpenPayload`, `SessionAck`, `SessionReject`, `PromptPayload`, `ResponseChunk`, `ResponseEnd`, `SessionClose`, `SessionTimeout`. Every interface includes `v: typeof PROTOCOL_VERSION` and a `type` discriminant. | `src/protocol.ts`              | `[x]`  |
+| S-3   | Implement Ed25519 helpers using Node.js built-in `crypto`: `signEd25519(privateKey, payload): Buffer`, `verifyEd25519(publicKey, payload, signature): boolean`. Inputs are `Buffer`/`Uint8Array`; outputs are typed. No third-party crypto. | `src/crypto.ts`                | `[x]`  |
+| S-4   | Implement TLS utilities: `parseFingerprintFromUrl(url): { host, port, fingerprint }` (extracts `fp=sha256:...` query param), `connectWithPinnedFingerprint(host, port, fingerprintHex): Promise<TLSSocket>` (rejects on mismatch, fails closed), `computeFingerprint(certPem): string` (returns `sha256:<hex>`). | `src/tls.ts`                   | `[x]`  |
+| S-5   | Define typed error classes — each has a `readonly code` literal: `HostBusyError` (`"HOST_BUSY"`), `InvalidTokenError` (`"INVALID_TOKEN"`), `NotRegisteredError` (`"NOT_REGISTERED"`), `SlotEraseError` (`"SLOT_ERASE_FAILED"`), `ProtocolVersionError` (`"PROTOCOL_VERSION_MISMATCH"`), `TlsFingerprintError` (`"TLS_FINGERPRINT_MISMATCH"`). | `src/errors.ts`                | `[x]`  |
+| S-6   | Write `index.ts` re-exporting everything from `protocol.ts`, `crypto.ts`, `tls.ts`, `errors.ts`. **Implementation note:** located at `src/index.ts` (not package root) so the TypeScript `rootDir` is consistent; `package.json#main` and subpath `exports` route consumers correctly. | `src/index.ts`                 | `[x]`  |
+| S-7   | Unit-test `crypto.ts`: sign/verify round-trip succeeds; verify rejects tampered payload; verify rejects with wrong public key; verify rejects malformed signature.                            | `tests/unit/crypto.test.ts`    | `[x]`  |
+| S-8   | Unit-test `tls.ts`: fingerprint parses correctly from URL; URL missing `fp` query param rejected; `computeFingerprint` produces stable SHA-256 over a known cert; pinned connection rejects mismatching fingerprint. | `tests/unit/tls.test.ts`       | `[x]`  |
 
 ---
 
@@ -189,7 +189,7 @@ Update this table whenever a task changes state. The phase rows are the source o
 
 | Phase | Title                                  | Total | Done | In progress | Blocked | Remaining |
 |-------|----------------------------------------|:-----:|:----:|:-----------:|:-------:|:---------:|
-| 0     | Prerequisite: `sharegrid-shared`       | 8     | 0    | 0           | 0       | 8         |
+| 0     | Prerequisite: `sharegrid-shared`       | 8     | 8    | 0           | 0       | 0         |
 | 1     | Repo scaffolding (`sharegrid-host`)    | 6     | 0    | 0           | 0       | 6         |
 | 2     | Infrastructure modules                 | 3     | 0    | 0           | 0       | 3         |
 | 3A    | Router Client                          | 6     | 0    | 0           | 0       | 6         |
@@ -200,11 +200,13 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 5     | Unit tests                             | 5     | 0    | 0           | 0       | 5         |
 | 6     | Integration tests                      | 5     | 0    | 0           | 0       | 5         |
 | 7     | CI pipeline                            | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                              | **56**| **0**| **0**       | **0**   | **56**    |
+| —     | **Total**                              | **56**| **8**| **0**       | **0**   | **48**    |
 
 ### Notes / blockers
 
-_No notes yet. Record blockers here with the task ID and a one-line description._
+- **Phase 0 complete.** `sharegrid-shared` shipped as `@sharegrid/shared` v0.1.0 at <https://github.com/MartijnLammaing/sharegrid-shared> (commit `052ed3d`). Verification: `tsc --noEmit` clean, `vitest run tests/unit` → 39/39 passing, production build emits `.js` + `.d.ts` + source maps for all four modules.
+- **S-5 implemented before S-4** because `tls.ts` imports `TlsFingerprintError`. Future plan revisions should reorder these.
+- **`selfsigned`** is included in `sharegrid-shared` as a **dev**Dependency only (used by `tests/unit/tls.test.ts` to generate a real cert for pinned-connect tests). It is not in the runtime bundle, consistent with the zero-runtime-deps policy.
 
 ---
 

@@ -42,15 +42,15 @@
 
 ## Phase 0 — Prerequisite: `sharegrid-shared`
 
-The LLMUser module does **not** require any new additions to `sharegrid-shared`. All protocol message types, TLS pinning utilities, host-key-token helpers, and typed error classes it needs are already defined by tasks S-1 through S-12 in the host and router plans. Specifically:
+**Status: complete.** `sharegrid-shared` v0.1.0 is published at <https://github.com/MartijnLammaing/sharegrid-shared> (commit `052ed3d`) and contains everything the LLMUser module needs:
 
-- Host-list messages (`HostListRequest`, `HostListResponse`, `HostListEntry`) — task S-9 (router plan)
-- Session messages (`SessionOpenPayload`, `SessionAck`, `SessionReject`, `PromptPayload`, `ResponseChunk`, `ResponseEnd`, `SessionClose`, `SessionTimeout`) — task S-2 (host plan)
-- TLS fingerprint pinning utility (`connectWithPinnedFingerprint`) — task S-4 (host plan)
-- Typed errors (`HostBusyError`, `InvalidTokenError`, `NotRegisteredError`, `TlsFingerprintError`, `ProtocolVersionError`) — tasks S-5 and S-11
-- Host-key-token wire format helpers (`decodeHostKeyToken`) — task S-10 (router plan)
+- Host-list messages (`HostListRequest`, `HostListResponse`, `HostListEntry`) — task S-9 (router plan) `[x]`
+- Session messages (`SessionOpenPayload`, `SessionAck`, `SessionReject`, `PromptPayload`, `ResponseChunk`, `ResponseEnd`, `SessionClose`, `SessionTimeout`) — task S-2 (host plan) `[x]`
+- TLS fingerprint pinning utility (`connectWithPinnedFingerprint`) — task S-4 (host plan) `[x]`
+- Typed errors (`HostBusyError`, `InvalidTokenError`, `NotRegisteredError`, `TlsFingerprintError`, `ProtocolVersionError`) — tasks S-5 and S-11 `[x]`
+- Host-key-token wire format helpers (`decodeHostKeyToken`) — task S-10 (router plan) `[x]`
 
-If any of those shared tasks slip, the corresponding LLMUser work is blocked.
+The LLMUser module itself introduced no new shared items.
 
 ---
 
@@ -182,7 +182,7 @@ Update this table whenever a task changes state. The phase rows are the source o
 
 | Phase | Title                                  | Total | Done | In progress | Blocked | Remaining |
 |-------|----------------------------------------|:-----:|:----:|:-----------:|:-------:|:---------:|
-| 0     | Prerequisite: `sharegrid-shared`       | 0     | 0    | 0           | 0       | 0         |
+| 0     | Prerequisite: `sharegrid-shared` (satisfied via host plan S-1–S-8 and router plan S-9–S-12) | 0     | 0    | 0           | 0       | 0         |
 | 1     | Repo scaffolding (`sharegrid-user`)    | 6     | 0    | 0           | 0       | 6         |
 | 2     | Infrastructure modules                 | 3     | 0    | 0           | 0       | 3         |
 | 3A    | Router Client                          | 4     | 0    | 0           | 0       | 4         |
@@ -197,7 +197,7 @@ Update this table whenever a task changes state. The phase rows are the source o
 
 ### Notes / blockers
 
-_No notes yet. Record blockers here with the task ID and a one-line description._
+- **Prerequisite satisfied.** `sharegrid-shared` v0.1.0 is published at <https://github.com/MartijnLammaing/sharegrid-shared> (commit `052ed3d`). All twelve shared items (S-1 through S-12) referenced by this plan are complete; the LLMUser module is unblocked for Phase 1.
 
 ---
 
