@@ -1,0 +1,9 @@
+[submodule "sharegrid-host"]
+	path = sharegrid-host
+	url = git@github.com:MartijnLammaing/sharegrid-host.git
+[submodule "sharegrid-router"]
+	path = sharegrid-router
+	url = git@github.com:MartijnLammaing/sharegrid-router.git
+[submodule "sharegrid-user"]
+	path = sharegrid-user
+	url = git@github.com:MartijnLammaing/sharegrid-user.git
