@@ -137,9 +137,9 @@ The user is a CLI. Docker packaging is provided for parity with the host and rou
 
 | #    | Task                                                                                                                                                                                                                                                                                                                                                                                       | File                          | Status |
 |------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------|:------:|
-| 4-1  | Write **Stage 1** (builder). Base `node:22-slim`. `WORKDIR /app`. `COPY package.json package-lock.json ./`. `RUN npm ci`. `COPY src ./src`. `COPY tsconfig.json tsconfig.build.json ./`. `RUN npm run build`. Output: `/app/dist/bundle.cjs`.                                                                                                                                              | `Dockerfile`                  | `[ ]`  |
-| 4-2  | Write **Stage 2** (runtime). Base `node:22-slim`. Create non-root `sharegrid` user/group. `WORKDIR /app`. `COPY --from=stage1 /app/dist/bundle.cjs /app/bundle.cjs`. `USER sharegrid`. `CMD ["node", "/app/bundle.cjs"]`. Note: the CLI requires a TTY — image must be run with `docker run -it`.                                                                                            | `Dockerfile`                  | `[ ]`  |
-| 4-3  | Write `docker-run.example.sh`: `docker run -it --rm -e SHAREGRID_ROUTER_URL=https://...?fp=sha256:... registry/llmuser@sha256:<digest>`. Document the `-it` flag requirement inline.                                                                                                                                                                                                       | `docker-run.example.sh`       | `[ ]`  |
+| 4-1  | Write **Stage 1** (builder). Base `node:22-slim`. `WORKDIR /app`. `COPY package.json package-lock.json ./`. `RUN npm ci`. `COPY src ./src`. `COPY tsconfig.json tsconfig.build.json ./`. `RUN npm run build`. Output: `/app/dist/bundle.cjs`.                                                                                                                                              | `Dockerfile`                  | `[x]`  |
+| 4-2  | Write **Stage 2** (runtime). Base `node:22-slim`. Create non-root `sharegrid` user/group. `WORKDIR /app`. `COPY --from=stage1 /app/dist/bundle.cjs /app/bundle.cjs`. `USER sharegrid`. `CMD ["node", "/app/bundle.cjs"]`. Note: the CLI requires a TTY — image must be run with `docker run -it`.                                                                                            | `Dockerfile`                  | `[x]`  |
+| 4-3  | Write `docker-run.example.sh`: `docker run -it --rm -e SHAREGRID_ROUTER_URL=https://...?fp=sha256:... registry/llmuser@sha256:<digest>`. Document the `-it` flag requirement inline.                                                                                                                                                                                                       | `docker-run.example.sh`       | `[x]`  |
 
 ---
 
@@ -189,11 +189,11 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 3B    | Session Client                         | 7     | 7    | 0           | 0       | 0         |
 | 3C    | CLI                                    | 7     | 7    | 0           | 0       | 0         |
 | 3D    | Entry point                            | 2     | 2    | 0           | 0       | 0         |
-| 4     | Dockerfile                             | 3     | 0    | 0           | 0       | 3         |
+| 4     | Dockerfile                             | 3     | 3    | 0           | 0       | 0         |
 | 5     | Unit tests                             | 4     | 0    | 0           | 0       | 4         |
 | 6     | Integration tests                      | 5     | 0    | 0           | 0       | 5         |
 | 7     | CI pipeline                            | 1     | 0    | 0           | 0       | 1         |
-| —     | **Total**                              | **42**| **29**| **0**      | **0**   | **13**    |
+| —     | **Total**                              | **42**| **32**| **0**      | **0**   | **10**    |
 
 ### Notes / blockers
 
