@@ -37,6 +37,7 @@
 | 5 | Unit tests | 4 | Phase 3D |
 | 6 | Integration tests | 5 | Phase 3D |
 | 7 | CI pipeline | 1 | Phase 5 |
+| 8 | Prompt cancellation (user side) | 4 | Phases 3B, 3C, host Phase 8 |
 
 ---
 
@@ -176,6 +177,19 @@ Integration tests use real TLS sockets with mock router and mock host servers st
 
 ---
 
+## Phase 8 — Prompt cancellation (user side)
+
+Adds contextual Ctrl+C support: cancels the in-flight response when generation is active; exits the program when at the input prompt. Depends on the shared protocol and host changes in host Phase 8.
+
+| #    | Task                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | File                                      | Status |
+|------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------|:------:|
+| 8-1  | Define `PromptCancelledError` in `session-client.ts` (same pattern as `SessionTimeoutError`: `readonly code = 'PROMPT_CANCELLED' as const`). Add `cancelPrompt(): Promise<void>` to the `SessionClient` interface and implementation: sends `{ v: PROTOCOL_VERSION, type: 'prompt_cancel' }`; waits for a `prompt_cancelled` message from the host; on receipt, rejects the in-flight `sendPrompt` promise with `PromptCancelledError` and resolves the `cancelPrompt` promise. Handle `prompt_cancelled` in `handleSessionMessage` — if no prompt is in flight, treat as a no-op. Export `PromptCancelledError` alongside the other error classes at the bottom of the file. | `src/session-client.ts`                   | `[ ]`  |
+| 8-2  | Add `generationInFlight` boolean flag to `cli.ts`, initialised to `false`. Set it to `true` immediately before calling `sessionClient.sendPrompt(...)` and clear it in a `finally` block after the call resolves or rejects. Change the SIGINT handler: if `generationInFlight === true`, call `sessionClient.cancelPrompt()` and write `\n[stopped]\n` to `process.stdout` — **do not exit**. If `generationInFlight === false`, keep the existing close-session-and-exit behaviour. Catch `PromptCancelledError` in the conversation loop: discard the `accumulated` string, do not push an assistant turn to `messages`, and continue the loop. Update the connection banner from `Type a message, or Ctrl+C to exit.` to `Type a message, Ctrl+C to stop generation, Ctrl+C again to exit.` | `src/cli.ts`                              | `[ ]`  |
+| 8-3  | Unit-test the cancel path in `cli.ts`. Cases: SIGINT fires while `generationInFlight === true` → `cancelPrompt()` called, `[stopped]` printed to stdout, loop continues without exiting; SIGINT fires while `generationInFlight === false` → existing exit path runs; `PromptCancelledError` thrown by `sendPrompt` → `accumulated` is discarded, no assistant turn added to `messages`, conversation loop continues. | `tests/unit/cli.test.ts`                  | `[ ]`  |
+| 8-4  | Integration test — cancel mid-stream. Stand up a mock host that accepts a session, begins streaming chunks for a prompt, then receives `prompt_cancel` — at that point it stops streaming and sends `prompt_cancelled`. Verify: (a) the CLI writes `[stopped]` to stdout; (b) the session socket remains open (no `session_close` sent); (c) the CLI accepts and sends a subsequent prompt normally, and the mock host's response streams correctly to stdout. | `tests/integration/cancel.test.ts`        | `[ ]`  |
+
+---
+
 ## Status ledger
 
 Update this table whenever a task changes state. The phase rows are the source of truth; do not let the per-task tables and this ledger diverge.
@@ -193,7 +207,8 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 5     | Unit tests                             | 4     | 4    | 0           | 0       | 0         |
 | 6     | Integration tests                      | 5     | 5    | 0           | 0       | 0         |
 | 7     | CI pipeline                            | 1     | 1    | 0           | 0       | 0         |
-| —     | **Total**                              | **42**| **42**| **0**      | **0**   | **0**     |
+| 8     | Prompt cancellation (user side)        | 4     | 0    | 0           | 0       | 4         |
+| —     | **Total**                              | **46**| **42**| **0**      | **0**   | **4**     |
 
 ### Notes / blockers
 

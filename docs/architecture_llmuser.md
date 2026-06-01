@@ -60,6 +60,8 @@ The user-facing interface. Responsibilities:
 - On session errors (host busy, connection failure, idle timeout): display a clear message and return to the host list or exit.
 - Apply no transformation to prompt or response content — it is a transparent pipe to the Session Client.
 
+**Generation stop (Ctrl+C):** Ctrl+C is context-sensitive. If a response is currently being streamed, the CLI sends a `prompt_cancel` to the host and waits for `prompt_cancelled` before returning to the `You:` prompt. The partial response is discarded and not added to conversation history — the session remains open and the user may send another prompt immediately. If no generation is in flight (i.e. the user is at the input prompt), Ctrl+C closes the session and exits the program.
+
 ### 2.4 Configuration
 
 | Variable | Required | Description | Example |
@@ -102,9 +104,18 @@ sequenceDiagram
         H-->>SC: Response stream (encrypted)
         SC-->>CLI: Response stream
         CLI->>User: Display response
+
+        opt User presses Ctrl+C during generation
+            CLI->>SC: cancelPrompt()
+            SC->>H: prompt_cancel
+            H-->>SC: prompt_cancelled
+            SC-->>CLI: PromptCancelledError
+            CLI->>User: [stopped]
+            Note over CLI: Partial response discarded;<br/>conversation loop continues
+        end
     end
 
-    User->>CLI: Exit
+    User->>CLI: Ctrl+C at input prompt
     CLI->>SC: Close session
     SC->>H: Close connection
 ```
@@ -143,6 +154,7 @@ The LLMUser holds no state between sessions. No conversation history, credential
 | Host busy (slot occupied) | Inform the user ("host is busy"); return to the host list. |
 | Host key token rejected (expired) | Inform the user; offer to re-fetch the host list. |
 | Session idle timeout (host closes connection) | Inform the user; return to the host list. |
+| User cancels generation (Ctrl+C during response) | Send `prompt_cancel`; wait for `prompt_cancelled`; discard partial response; resume conversation loop. |
 
 ---
 

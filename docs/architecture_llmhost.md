@@ -72,6 +72,7 @@ The Session Manager exposes a raw **TLS server** using the ephemeral TLS keypair
 - On connection, the LLMUser sends a `session_open` message carrying the host key token.
 - The Session Manager responds with `session_ack` (accepted) or `session_reject` (slot occupied, invalid token, or router not registered).
 - Prompts are sent as `prompt` messages. Each prompt produces one or more `response_chunk` messages followed by a single `response_end`.
+- The LLMUser may send `prompt_cancel` at any point while a prompt is in flight. The Session Manager aborts the in-flight llama.cpp request and responds with `prompt_cancelled`. The session slot remains occupied and the KV cache is not flushed — the session continues normally and the LLMUser may send the next `prompt` immediately.
 - Either party may send `session_close` to end the session gracefully.
 - If the idle timer expires, the Session Manager sends `session_timeout` and closes the connection.
 

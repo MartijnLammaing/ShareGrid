@@ -37,6 +37,7 @@
 | 5 | Unit tests | 5 | Phase 3D |
 | 6 | Integration tests | 5 | Phase 3D |
 | 7 | CI pipeline | 1 | Phase 5 |
+| 8 | Prompt cancellation (host side) | 4 | Phase 3C |
 
 ---
 
@@ -183,6 +184,19 @@ Integration tests use real TLS sockets and real timers. Mocks appear only at I/O
 
 ---
 
+## Phase 8 — Prompt cancellation (host side)
+
+Adds protocol-level support for the user cancelling an in-flight response without closing the session. The KV cache is preserved on cancel, so conversation context at the model level is unaffected.
+
+| #    | Task                                                                                                                                                                                                                                                                                                                                                                                                                                         | File                                 | Status |
+|------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------|:------:|
+| 8-1  | Add `PromptCancel { v: ProtocolVersion; type: 'prompt_cancel' }` and `PromptCancelled { v: ProtocolVersion; type: 'prompt_cancelled' }` to `sharegrid-shared/src/protocol.ts`. Add `PromptCancel` to the `HostIncomingMessage` union; add `PromptCancelled` to the `UserFromHostMessage` union. Rebuild and republish `sharegrid-shared` with a patch version bump. | `sharegrid-shared/src/protocol.ts`   | `[ ]`  |
+| 8-2  | Extend the `InferenceProxy` interface with `cancelPrompt(): void`. In the `sendPrompt` implementation, promote the in-flight `req` handle to a variable declared outside the Promise closure so `cancelPrompt` can reach it. `cancelPrompt` calls `req.destroy()` if a request is currently in flight; it is a no-op otherwise. | `src/inference-proxy.ts`             | `[ ]`  |
+| 8-3  | Handle `prompt_cancel` in `session-manager.ts` message dispatch. When received while a prompt is in flight: call `inferenceProxy.cancelPrompt()`; send `prompt_cancelled` to the user; reset the `promptInFlight` flag. When received with no prompt in flight: send `prompt_cancelled` immediately (idempotent no-op). Update the `HostIncomingMessage` switch so the `msg satisfies never` exhaustiveness check remains valid after the union change in task 8-1. The idle timer is not reset by `prompt_cancel`. | `src/session-manager.ts`             | `[ ]`  |
+| 8-4  | Unit-test the cancel path. Cases: `prompt_cancel` received while prompt in flight → `cancelPrompt()` called on proxy mock + `prompt_cancelled` sent to client + `promptInFlight` cleared; `prompt_cancel` received with no prompt in flight → `prompt_cancelled` sent, no crash; session remains open after cancel and accepts a subsequent `prompt` normally; idle timer is unaffected by a cancel. | `tests/unit/session-manager.test.ts` | `[ ]`  |
+
+---
+
 ## Status ledger
 
 Update this table whenever a task changes state. The phase rows are the source of truth; do not let the per-task tables and this ledger diverge.
@@ -200,7 +214,8 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 5     | Unit tests                             | 5     | 5    | 0           | 0       | 0         |
 | 6     | Integration tests                      | 5     | 5    | 0           | 0       | 0         |
 | 7     | CI pipeline                            | 1     | 1    | 0           | 0       | 0         |
-| —     | **Total**                              | **56**| **56**| **0**      | **0**   | **0**     |
+| 8     | Prompt cancellation (host side)        | 4     | 0    | 0           | 0       | 4         |
+| —     | **Total**                              | **60**| **56**| **0**      | **0**   | **4**     |
 
 ### Notes / blockers
 

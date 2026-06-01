@@ -102,6 +102,13 @@ sequenceDiagram
         U->>H: Prompt (encrypted)
         H->>H: LLM inference inside container
         H-->>U: Response (encrypted)
+
+        opt User presses Ctrl+C during generation
+            U->>H: prompt_cancel
+            H->>H: Abort in-flight inference
+            H-->>U: prompt_cancelled
+            Note over U: Partial response discarded;<br/>session remains open
+        end
     end
 
     U->>H: Close session
@@ -209,6 +216,7 @@ The Docker container running the LLMHost must be configured with:
 - Presents the user with a list of available hosts and their model metadata
 - Opens a direct TLS connection to the selected LLMHost
 - Sends prompts and displays responses; no local file I/O or command execution in Phase 1
+- Ctrl+C during generation cancels the in-flight response without closing the session; Ctrl+C at the input prompt exits the program
 
 ---
 
