@@ -37,8 +37,9 @@ graph TB
 
 Handles the connection to the LLMRouter. Responsibilities:
 
-- Parse the `fp` query parameter from `SHAREGRID_ROUTER_URL` and pin the TLS connection to that fingerprint when connecting to the router.
-- Establish a TLS connection to the configured router endpoint.
+- Parse the `fp` and `key` query parameters from `SHAREGRID_ROUTER_URL`. `SHAREGRID_ROUTER_URL` must be the **user access URL** (containing the user-specific `key`); it is distinct from the host registration URL and cannot be used to register a host.
+- Pin the TLS connection to the `fp` fingerprint when connecting to the router.
+- Present the user `key` to the router on connection; the router validates it before returning the host list.
 - Request the host list and return it to the CLI.
 - Close the router connection once the host list is received — the router is not involved after this point.
 
@@ -66,7 +67,7 @@ The user-facing interface. Responsibilities:
 
 | Variable | Required | Description | Example |
 |----------|:--------:|-------------|---------|
-| `SHAREGRID_ROUTER_URL` | Yes | LLMRouter endpoint to connect to on startup | `https://router.example.com:8443` |
+| `SHAREGRID_ROUTER_URL` | Yes | **User access URL** for this network (printed by the router at startup under "USER ACCESS URLs"). Contains both the `fp` fingerprint and the user-specific `key`. Must not be a host registration URL. | `https://router.example.com:8443?fp=sha256:a3f1...&key=u-p7rNv4...` |
 
 If the required variable is absent, the CLI must exit immediately with a clear error.
 
@@ -141,6 +142,14 @@ In Phase 1, all host responses are treated as plain text and displayed as-is. No
 ### 4.4 No Persistent State
 
 The LLMUser holds no state between sessions. No conversation history, credentials, or host keys are written to disk. On exit, everything is gone.
+
+### 4.5 Role Separation
+
+The user access URL contains a user-specific `key` credential that is distinct from the host registration `key`. The router validates this credential on every connection and gates it exclusively to the host-list path — a connection presenting the user `key` cannot reach the host registration handler, regardless of what payload it sends.
+
+This means a user who has been given a user access URL cannot register a host on the network, even if they know the router's address and TLS fingerprint. Registering a host requires the host registration URL, which contains a different secret that only the group administrator distributes to trusted host operators.
+
+The security guarantee is: **possession of the user URL grants the ability to discover and connect to hosts, nothing more.** A user cannot escalate to host role through any action taken within the protocol.
 
 ---
 

@@ -8,7 +8,7 @@
 
 ShareGrid is a peer-to-peer compute-sharing network for **closed groups of trusted actors** — such as a university computer cluster, a company's internal infrastructure, or a group of collaborating individuals. It allows participants within such a group to host and consume local LLM inference without relying on cloud providers.
 
-ShareGrid is explicitly **not** designed as an open network where unknown or unvetted participants can join organically. Membership in a ShareGrid network is controlled out-of-band: a group administrator runs an LLMRouter and distributes its registration URL (which embeds the router's TLS certificate fingerprint) only to parties they trust. Possession of that URL is the entry credential for the network.
+ShareGrid is explicitly **not** designed as an open network where unknown or unvetted participants can join organically. Membership in a ShareGrid network is controlled out-of-band by a group administrator who runs an LLMRouter. The router generates two distinct URLs on startup — a **host registration URL** and a **user access URL** — each embedding a role-specific secret alongside the router's TLS certificate fingerprint. The administrator distributes each URL only to the parties who should hold that role: host operators receive the host URL, end users receive the user URL. Possessing the user URL does not grant the ability to register as a host, and vice versa.
 
 The system is designed around three roles: a router that coordinates the network, hosts that provide compute, and users that consume it.
 
@@ -143,11 +143,14 @@ Hardware-level isolation (e.g. TEE/SGX enclaves) would be required to close this
 
 As a consequence of this model, **LLMHost operators are expected to build their own images** with the LLM of their choice, applying the hardening requirements described in §5.4. No canonical "official" image is provided or implied. Operators take responsibility for the correctness and security of the image they run.
 
+**3. The two-URL split provides role separation, not identity verification.** The router generates a host-specific secret and a user-specific secret on startup; each is embedded in its respective URL. A party who holds only the user URL cannot register a host, because the router validates the `key` parameter against the appropriate secret before admitting any connection to the registration or host-list path. However, the router does not verify *who* holds the URL — that remains a social guarantee. A legitimate user who improperly receives the host URL (e.g. due to an administrator distributing it carelessly) would be able to register a host. The administrator is responsible for distributing each URL only to the intended role.
+
 ### 5.2 Threat Model Summary
 
 | Threat | Mitigation |
 |--------|------------|
-| Unauthorized actor registering a host (does not have the registration URL) | Registration URL is distributed out-of-band by the group administrator to trusted parties only; URL embeds the router's TLS certificate fingerprint, preventing MITM interception |
+| Unauthorized actor registering a host (does not have the host registration URL) | Host registration URL is distributed out-of-band by the administrator to trusted host operators only; router validates the host-specific `key` param before admitting any registration connection |
+| Legitimate user attempting to register a host (has user URL, not host URL) | User URL embeds a user-specific `key`; the router rejects any registration attempt that does not present the host-specific `key` — the user URL cannot be used to register a host |
 | Registered host impersonating a different registered host | Router-issued Ed25519-signed host keys are unique per registration; hosts must re-register on reconnect |
 | Eavesdropping on User ↔ Host traffic | All User ↔ Host communication is a direct, encrypted TLS channel |
 | LLM or host process accessing the host machine | Hardened Docker container; no host networking, no host IPC, minimal capabilities (see §5.4) |
@@ -205,7 +208,9 @@ LLMHost operators build their own Docker images (see §5.1 and §9). The followi
 ### LLMRouter
 
 - Runs as a Docker container; this is a deployment convenience (dependency isolation, consistent operator experience), not a security requirement — unlike LLMHost, the router runs no untrusted code
-- Manages its own TLS certificate internally; the cert is written to a fixed path inside the container and its fingerprint is embedded in the connection URL the operator distributes
+- Manages its own TLS certificate internally; the cert is written to a fixed path inside the container and its fingerprint is embedded in both URLs the operator distributes
+- On startup, generates two random role credentials — a **host secret** and a **user secret** — held in memory only; each is embedded as a `key` query parameter in its respective URL. Validates the `key` on every incoming connection before routing to the host registration or user host-list path
+- Prints two separate sets of URLs at startup: **host registration URLs** (distributed only to host operators) and **user access URLs** (distributed only to end users)
 - Maintains an in-memory registry of connected LLMHosts and their metadata (model name, endpoint address, host key)
 - Maintains an in-memory registry of active LLMUser sessions
 - Issues signed host keys to LLMHosts on registration
@@ -216,8 +221,8 @@ LLMHost operators build their own Docker images (see §5.1 and §9). The followi
 ### LLMHost
 
 - Is a single Docker container; **operators build their own image** with their chosen LLM (llama.cpp is the reference implementation; others may be substituted provided the internal API contract is met)
-- The operator's responsibilities are: building a compliant image (see §5.4), and running it with the correct hardening flags and the group's registration URL
-- Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter using the provided registration URL
+- The operator's responsibilities are: building a compliant image (see §5.4), and running it with the correct hardening flags and the group's **host registration URL**
+- Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter using the host registration URL (which carries the host-specific `key` credential)
 - Stores the router-issued host key in memory and enforces it on all incoming LLMUser connections
 - Accepts one session at a time (Phase 1 constraint)
 - Wipes all session state (llama.cpp KV cache) on session end; exits the container if the wipe cannot be confirmed
@@ -225,7 +230,7 @@ LLMHost operators build their own Docker images (see §5.1 and §9). The followi
 ### LLMUser
 
 - CLI interface; no GUI in Phase 1
-- Connects to the configured LLMRouter on startup
+- Connects to the configured LLMRouter on startup using the **user access URL** (which carries the user-specific `key` credential)
 - Presents the user with a list of available hosts and their model metadata
 - Opens a direct TLS connection to the selected LLMHost
 - Sends prompts and displays responses; no local file I/O or command execution in Phase 1
@@ -279,8 +284,13 @@ ShareGrid does not attempt to be an open network where any willing participant c
 **Operator-built host images**
 No canonical LLMHost image is provided or required. Operators build their own Docker image with the LLM of their choice — llama.cpp is the reference implementation and recommended default, but any inference engine can be used provided the internal API contract is satisfied. Operators are responsible for meeting the hardening requirements in §5.4. This gives operators full control over model selection, quantisation, and configuration, while keeping the system lightweight (no image distribution infrastructure required).
 
-**Registration URL as network entry credential**
-The LLMRouter generates a TLS certificate on first start and exposes a registration URL that embeds the certificate's fingerprint (SHA key). The administrator distributes this URL out-of-band to trusted hosts and users. The embedded fingerprint pins the TLS connection to the legitimate router, preventing MITM attacks at registration time. A party without the URL cannot register as a host or user; a party who intercepts the URL over an insecure channel cannot exploit it without also being able to impersonate the router's TLS certificate.
+**Role-separated URLs (host registration URL and user access URL)**
+The router generates two random secrets on startup — one for host operators, one for end users — and embeds each as a `key` query parameter in its respective URL alongside the router's TLS certificate fingerprint. The administrator distributes the host URL only to trusted host operators, and the user URL only to end users. The router validates the `key` on every incoming connection before routing it to the host registration or user host-list path. This means a party holding only the user URL cannot register a host, regardless of what payload they send. The separation is enforced at the router, not by social convention alone.
+
+The two secrets are held in memory and are lost on router restart; both URLs must be redistributed after a full container recreation (consistent with the existing disruption a restart causes — the Ed25519 key is also lost).
+
+**TLS fingerprint pinning in connection URLs**
+Both URLs embed the router's TLS certificate fingerprint (the `fp` parameter). Clients parse it from the URL and pin the TLS connection to it, preventing a man-in-the-middle from intercepting the connection at registration time. A party who receives a URL over a compromised channel cannot be redirected to a different router without the fingerprint mismatch being detected. The `fp` and `key` parameters together mean possession of a valid URL proves both that the client reached the legitimate router and that they hold the correct role credential.
 
 **llama.cpp in a shared keep-alive container**
 Weights are loaded once at container start rather than per session. A slot-erase call clears the KV cache after each session; the container restarts if the erase cannot be confirmed. This eliminates per-session startup latency and keeps memory cost fixed.

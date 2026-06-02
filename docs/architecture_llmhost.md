@@ -45,9 +45,9 @@ graph TB
 Owns the connection to LLMRouter. Responsibilities:
 
 - Generate an ephemeral TLS keypair at startup. The private key is held in memory only and is never written to disk.
-- Parse the `fp` query parameter from `SHAREGRID_ROUTER_URL` and pin the TLS connection to that fingerprint when connecting to the router. The `fp` value is a SHA-256 hex fingerprint prefixed with `sha256:` (e.g. `sha256:a3f1c2d4e5b6...`), matching the format printed by the router at startup (see [`architecture_llmrouter.md`](./architecture_llmrouter.md) §7).
-- Establish the TLS connection to the configured router address.
-- Send the registration payload: model metadata, the Session Manager's listening port, and the TLS cert fingerprint so LLMUsers can pin to it.
+- Parse the `fp` and `key` query parameters from `SHAREGRID_ROUTER_URL`. `SHAREGRID_ROUTER_URL` must be the **host registration URL** (containing the host-specific `key`); it is distinct from the user access URL and cannot be used by LLMUsers. The `fp` value is a SHA-256 hex fingerprint prefixed with `sha256:` (e.g. `sha256:a3f1c2d4e5b6...`), matching the format printed by the router at startup (see [`architecture_llmrouter.md`](./architecture_llmrouter.md) §7).
+- Establish the TLS connection to the configured router address, pinned to the `fp` fingerprint.
+- Send the registration payload: the host `key`, model metadata, the Session Manager's listening port, and the TLS cert fingerprint so LLMUsers can pin to it. The router validates the host `key` before admitting the registration.
 - Receive and store the router-issued **host key** (as `current_token`) and the **router's Ed25519 public key** in memory.
 - Pass the current host key token and the router public key to the Session Manager once registration is confirmed.
 - Emit a heartbeat on a fixed interval. Each heartbeat response carries a freshly issued host key token from the router; on receipt, rotate: `previous_token ← current_token`, `current_token ← new token`. Notify the Session Manager of the updated token pair. Clear `previous_token` after a 60-second grace period.
@@ -111,7 +111,7 @@ These values cannot be known at build time and must be supplied by the operator.
 
 | Variable | Required | Description | Example |
 |----------|:--------:|-------------|---------|
-| `SHAREGRID_ROUTER_URL` | Yes | LLMRouter endpoint the Router Client connects to | `https://router.example.com:8443` |
+| `SHAREGRID_ROUTER_URL` | Yes | **Host registration URL** for this network (printed by the router at startup under "HOST REGISTRATION URLs"). Contains both the `fp` fingerprint and the host-specific `key`. Must not be a user access URL. | `https://router.example.com:8443?fp=sha256:a3f1...&key=h-x9k2mQ...` |
 | `SHAREGRID_LISTEN_PORT` | Yes | Port the Session Manager TLS listener binds to inside the container. Must match the `-p` flag supplied by the operator. | `9000` |
 | `SHAREGRID_HEARTBEAT_INTERVAL` | No | Seconds between heartbeat pings to the router. Default: `30` | `30` |
 
@@ -296,7 +296,7 @@ They do not protect against a **malicious LLMHost operator**. Root on the host c
 
 They also do not allow the router or LLMUsers to **verify the contents of the Docker image** the operator is running. The router issues a host key on registration, but has no mechanism to attest that the container is running an unmodified or compliant image.
 
-**These two limitations are why ShareGrid is designed for closed groups of trusted actors, not open participation.** Trust in a LLMHost operator is established out-of-band: a group administrator distributes the registration URL only to parties they trust. A registered host is trusted because the administrator chose to give that operator the URL — not because any technical mechanism verified the image or the operator's intent. A LLMUser is placing the same trust in a host operator as they would in a cloud provider — socially and contractually, not technically.
+**These two limitations are why ShareGrid is designed for closed groups of trusted actors, not open participation.** Trust in a LLMHost operator is established out-of-band: a group administrator distributes the host registration URL only to parties they trust as host operators. The two-URL role split (host registration URL vs. user access URL) adds a technical enforcement layer: a party holding only the user URL cannot register a host because the router validates the role-specific `key` before admitting any registration connection. A registered host is trusted because the administrator chose to give that operator the URL — not because any technical mechanism verified the image or the operator's intent. A LLMUser is placing the same trust in a host operator as they would in a cloud provider — socially and contractually, not technically.
 
 This must be clearly communicated to LLMUsers. See also [`architecture_overview.md`](./architecture_overview.md) §5.
 

@@ -18,7 +18,9 @@ The LLMRouter has three distinct concerns that must be kept architecturally sepa
 
 The LLMRouter is a single, stateless process (stateless about conversation content; stateful about registrations). It exposes one TLS endpoint that both LLMHosts and LLMUsers connect to. It runs as a Docker container — this is a deployment convenience (dependency isolation, consistent launch pattern across the network), not a security requirement. Unlike LLMHost, the router runs no untrusted code, so extensive hardening is not necessary.
 
-The router manages its own TLS certificate. On first startup it generates a self-signed cert and writes it to a fixed internal path (`/data/certs`). Subsequent startups load the existing cert — the fingerprint stays stable across `docker stop`/`docker start` cycles. The fingerprint is embedded in the connection URL printed at startup (see §7); operators distribute that URL through a trusted channel, which is the only out-of-band step required.
+The router manages its own TLS certificate. On first startup it generates a self-signed cert and writes it to a fixed internal path (`/data/certs`). Subsequent startups load the existing cert — the fingerprint stays stable across `docker stop`/`docker start` cycles.
+
+On every startup, the router also generates two random role credentials — a **host secret** and a **user secret** — held in memory only. These are embedded as a `key` query parameter in two separate sets of URLs printed at startup (see §7): **host registration URLs** for distribution to host operators, and **user access URLs** for distribution to end users. The router validates the `key` on every incoming connection before routing it to the host registration or user host-list handler; a connection presenting the user secret cannot trigger the host registration path.
 
 ```mermaid
 graph TB
@@ -48,15 +50,17 @@ The single inbound endpoint for the network. Responsibilities:
 
 ### 2.2 Key Authority
 
-Owns the router's Ed25519 signing key — the trust anchor for the entire network. Responsibilities:
+Owns the router's Ed25519 signing key and the two role credentials — the combined trust anchor for the network. Responsibilities:
 
 - Hold the Ed25519 private key in memory only. It is never written to disk.
+- On startup, generate a **host secret** and a **user secret** — cryptographically random strings held in memory only. These are embedded in the host registration URLs and user access URLs respectively (see §7).
+- On every incoming TLS connection, validate the `key` query parameter presented by the connecting party against the appropriate secret before the TLS Listener routes the connection to a handler. Connections with no `key`, an incorrect `key`, or a `key` that belongs to the wrong role are rejected immediately with no partial state written.
 - On host registration, issue a **host key token**: a signed payload containing the host identifier, the host's TLS cert fingerprint, and an expiry timestamp.
 - On each heartbeat, re-issue a fresh host key token with a new expiry and return it in the heartbeat response. The Host Registry is updated with the new token immediately.
 - Expose the corresponding **Ed25519 public key** to outbound responses so that LLMHosts can verify tokens presented by LLMUsers.
 - Have no external interface; only the TLS Listener may invoke it.
 
-> On router restart, the private key is gone. All previously issued host key tokens are immediately invalid — their signature can no longer be verified against the new key. All hosts must re-register and all users must reconnect. This is intentional: no stale credentials survive a router restart.
+> On router restart, the Ed25519 private key and both role secrets are gone. All previously issued host key tokens are immediately invalid. Both URLs must be redistributed. All hosts must re-register and all users must reconnect. This is intentional: no stale credentials survive a router restart.
 
 ### 2.3 Host Registry
 
@@ -96,8 +100,8 @@ sequenceDiagram
     participant KA as Key Authority
     participant HR as Host Registry
 
-    H->>TLS: TLS connect + registration payload<br/>(model metadata, port, TLS cert fingerprint)
-    TLS->>TLS: Validate payload (required fields present, port in valid range)
+    H->>TLS: TLS connect + registration payload<br/>(key=host-secret, model metadata, port, TLS cert fingerprint)
+    TLS->>TLS: Validate host secret (key param)<br/>Validate payload (required fields present, port in valid range)
     TLS->>KA: Request host key token<br/>(host_id, tls_fingerprint, expiry)
     KA->>KA: Sign payload with Ed25519 private key
     KA-->>TLS: Signed host key token
@@ -124,7 +128,8 @@ sequenceDiagram
     participant TLS as TLS Listener
     participant HR as Host Registry
 
-    U->>TLS: TLS connect + handshake request
+    U->>TLS: TLS connect + handshake request<br/>(key=user-secret)
+    TLS->>TLS: Validate user secret (key param)
     TLS->>HR: Fetch current host list
     HR-->>TLS: Active host entries
     TLS-->>U: Host list<br/>(model metadata, endpoint, tls_fingerprint, host_key_token)
@@ -193,9 +198,11 @@ The overlap window state (current + previous token, grace period timer) lives en
 
 The router is a trusted coordinator. It does not observe inference traffic, which limits its exposure to conversation data. Its main attack surface is the TLS listener and the Key Authority's private key.
 
-The router is also the **network entry gatekeeper** for the closed group. It cannot verify the Docker image contents of a registering LLMHost — it authenticates the TLS connection and issues a host key, but has no mechanism to attest what software is running inside the container. This is by design: trust in registered hosts is rooted in possession of the registration URL, which the group administrator distributes out-of-band only to trusted operators. The router enforces who is *admitted* to the network; it does not and cannot enforce what admitted participants *run*.
+The router is also the **network entry gatekeeper** for the closed group. It cannot verify the Docker image contents of a registering LLMHost — it authenticates the TLS connection and issues a host key, but has no mechanism to attest what software is running inside the container. This is by design: trust in registered hosts is rooted in possession of the host registration URL, which the group administrator distributes out-of-band only to trusted operators. The router enforces who is *admitted* to the network; it does not and cannot enforce what admitted participants *run*.
 
-**The registration URL is therefore a sensitive credential.** The administrator must distribute it only through trusted channels (e.g. a private message, a shared internal wiki, direct communication) and must treat any leak of the URL as a potential compromise of network membership.
+The **two-URL role split** provides an additional enforcement layer: a party who holds only the user access URL cannot register a host, because the router validates the `key` parameter against the host secret before admitting any connection to the registration path. This means a user (e.g. a student) cannot escalate to host role even if they know the router's address — they would need the host secret embedded in the host registration URL, which they were never given.
+
+**Both URLs are sensitive credentials.** The administrator must distribute each only to the appropriate role through trusted channels (e.g. a private message, a shared internal wiki, direct communication). A leak of the host URL is a potential compromise of host registration access; a leak of the user URL is a potential compromise of user access. Either should be treated as requiring a router restart and URL redistribution.
 
 See [`architecture_overview.md`](./architecture_overview.md) §5 for the full system trust boundary, including the treatment of malicious host operators and the closed-network design rationale.
 
@@ -258,17 +265,24 @@ LLMRouter started.
   Listen address : 0.0.0.0:8443
   TLS fingerprint: sha256:a3f1c2d4e5b6...
 
-  Reachable endpoints (use as SHAREGRID_ROUTER_URL):
-    https://203.0.113.7:8443?fp=sha256:a3f1c2d4e5b6...    [public]
-    https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...   [eth0]
-    https://10.0.0.5:8443?fp=sha256:a3f1c2d4e5b6...       [wlan0]
+  HOST REGISTRATION URLs — distribute only to trusted host operators:
+    https://203.0.113.7:8443?fp=sha256:a3f1c2d4e5b6...&key=h-x9k2mQ...    [public]
+    https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...&key=h-x9k2mQ...   [eth0]
+    https://10.0.0.5:8443?fp=sha256:a3f1c2d4e5b6...&key=h-x9k2mQ...       [wlan0]
 
-  Copy one of the above into SHAREGRID_ROUTER_URL on each LLMHost and LLMUser.
+  USER ACCESS URLs — distribute only to end users:
+    https://203.0.113.7:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...    [public]
+    https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...   [eth0]
+    https://10.0.0.5:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...       [wlan0]
+
+  Set SHAREGRID_ROUTER_URL on each LLMHost to a HOST REGISTRATION URL.
+  Set SHAREGRID_ROUTER_URL on each LLMUser to a USER ACCESS URL.
 ```
 
 Notes:
 - The `fp` query parameter contains the SHA-256 fingerprint of the router's TLS certificate. Clients parse it from the URL and pin the TLS connection to it — no separate cert distribution is needed.
-- **The registration URL is a sensitive credential.** It controls who may join the network as a host or user. The administrator must distribute it only through trusted channels (e.g. a private message, a shared internal wiki, or direct communication) and must treat any leak as a potential compromise of network membership. See §4.4.
+- The `key` query parameter is the role-specific secret. The router validates it on every connection before routing to the host registration or user host-list handler. A user presenting a user `key` cannot reach the host registration path.
+- **Both URLs are sensitive credentials.** The administrator must distribute each only to the appropriate role through trusted channels. A leak of either URL should be treated as a compromise requiring a router restart and full URL redistribution. See §4.4.
 - Loopback addresses (`127.0.0.1`, `::1`) are excluded — they are not reachable from other machines.
 - If no non-loopback interface is found, the router logs a warning and prints the raw listen address so the operator can still determine the correct value manually.
 - The public IP is resolved at startup by querying a public IP reflection service (e.g. `https://api.ipify.org`). If the lookup fails or times out, the `[public]` line is omitted and a warning is printed — this is non-fatal. The router starts regardless.
