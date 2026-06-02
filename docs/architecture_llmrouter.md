@@ -193,7 +193,11 @@ The overlap window state (current + previous token, grace period timer) lives en
 
 The router is a trusted coordinator. It does not observe inference traffic, which limits its exposure to conversation data. Its main attack surface is the TLS listener and the Key Authority's private key.
 
-See [`architecture_overview.md`](./architecture_overview.md) §5 for the full system trust boundary, including the treatment of malicious host operators.
+The router is also the **network entry gatekeeper** for the closed group. It cannot verify the Docker image contents of a registering LLMHost — it authenticates the TLS connection and issues a host key, but has no mechanism to attest what software is running inside the container. This is by design: trust in registered hosts is rooted in possession of the registration URL, which the group administrator distributes out-of-band only to trusted operators. The router enforces who is *admitted* to the network; it does not and cannot enforce what admitted participants *run*.
+
+**The registration URL is therefore a sensitive credential.** The administrator must distribute it only through trusted channels (e.g. a private message, a shared internal wiki, direct communication) and must treat any leak of the URL as a potential compromise of network membership.
+
+See [`architecture_overview.md`](./architecture_overview.md) §5 for the full system trust boundary, including the treatment of malicious host operators and the closed-network design rationale.
 
 ---
 
@@ -264,6 +268,7 @@ LLMRouter started.
 
 Notes:
 - The `fp` query parameter contains the SHA-256 fingerprint of the router's TLS certificate. Clients parse it from the URL and pin the TLS connection to it — no separate cert distribution is needed.
+- **The registration URL is a sensitive credential.** It controls who may join the network as a host or user. The administrator must distribute it only through trusted channels (e.g. a private message, a shared internal wiki, or direct communication) and must treat any leak as a potential compromise of network membership. See §4.4.
 - Loopback addresses (`127.0.0.1`, `::1`) are excluded — they are not reachable from other machines.
 - If no non-loopback interface is found, the router logs a warning and prints the raw listen address so the operator can still determine the correct value manually.
 - The public IP is resolved at startup by querying a public IP reflection service (e.g. `https://api.ipify.org`). If the lookup fails or times out, the `[public]` line is omitted and a warning is printed — this is non-fatal. The router starts regardless.
@@ -279,4 +284,4 @@ Notes:
 | **2** | Structured tool-call responses on the host side | No router changes required. The User ↔ Host channel is direct. |
 | **3** | Controlled internet access for LLMHost | No router changes required. Internet policy is enforced at the container level. |
 | **4** | Multiple simultaneous hosts and users; session reservation | Host Registry must track busy/free status per host. TLS Listener must handle host status update messages. User handshake response must surface host availability. |
-| **Future** | Multiple routers, load balancing, resource accounting | Router becomes a distributed or federated service. Host Registry needs a shared backing store. Key Authority must support key rotation without invalidating all live tokens. |
+| **Future** | Federation between independent trusted groups (e.g. inter-university, inter-department). Cross-group resource accounting. | Router-to-router peering with explicit trust grants between group administrators. Each group retains its own Key Authority and membership control. A shared or replicated Host Registry layer enables cross-group host discovery. Key Authority must support key rotation without invalidating all live tokens. |

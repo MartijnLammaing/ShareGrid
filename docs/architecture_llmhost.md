@@ -16,7 +16,7 @@ The LLMHost has three distinct concerns that must be kept architecturally separa
 
 ## 2. Internal Component Structure
 
-The LLMHost is a single Docker container. All logic — routing client, session management, inference proxying, and LLM inference — runs inside it. The host machine's only responsibility is starting the container. See [ADR-0005](./adr/0005-host-agent-inside-container.md).
+The LLMHost is a single Docker container. All logic — routing client, session management, inference proxying, and LLM inference — runs inside it. **Operators build their own image** with their chosen LLM (llama.cpp is the reference implementation and is used throughout this document; any inference engine satisfying the internal API contract may be substituted). Once the image is built, the host machine's only operational responsibility is starting the container with the correct hardening flags and registration URL. See [ADR-0005](./adr/0005-host-agent-inside-container.md).
 
 ```mermaid
 graph TB
@@ -140,8 +140,7 @@ sequenceDiagram
     participant LLM as llama.cpp (in container)
     participant R as LLMRouter
 
-    H->>D: docker run (digest-pinned image,\nhardening flags, --restart=on-failure)
-    D->>D: Verify image digest (ADR-0002)
+    H->>D: docker run (operator-built image,\nhardening flags, registration URL, --restart=on-failure)
     D->>RC: Start container processes
     RC->>RC: Generate ephemeral TLS keypair
     LLM->>LLM: Load model weights\nListen on internal Unix socket
@@ -281,7 +280,6 @@ These constraints cannot be enforced from inside the image and are the operator'
 | `--ipc=none` | No shared memory with host |
 | `--restart=on-failure` | Docker automatically restarts the container on unexpected exit |
 | `-p <host-port>:<container-port>` | Publishes only the Session Manager TLS port; no other ports are exposed |
-| Digest-pinned image reference | `registry/llmhost@sha256:<digest>` — enforced per [ADR-0002](./adr/0002-container-image-digest-pinning.md) |
 | Environment variables | Required configuration values per §2.5 — router URL, listen port, model metadata |
 
 ### 5.4 Session Isolation
@@ -296,7 +294,11 @@ The security measures in this document protect against **non-root host processes
 
 They do not protect against a **malicious LLMHost operator**. Root on the host can read container process memory, attach a debugger via `ptrace`, and intercept traffic at the NIC level — regardless of what runs inside the container. No transport choice or hardening measure closes this gap.
 
-**ShareGrid's trust model requires that LLMHost operators are trusted participants.** A LLMUser is placing the same trust in a host operator as they would in a cloud provider — socially and contractually, not technically. This must be clearly communicated to LLMUsers. See also [`architecture_overview.md`](./architecture_overview.md) §5.
+They also do not allow the router or LLMUsers to **verify the contents of the Docker image** the operator is running. The router issues a host key on registration, but has no mechanism to attest that the container is running an unmodified or compliant image.
+
+**These two limitations are why ShareGrid is designed for closed groups of trusted actors, not open participation.** Trust in a LLMHost operator is established out-of-band: a group administrator distributes the registration URL only to parties they trust. A registered host is trusted because the administrator chose to give that operator the URL — not because any technical mechanism verified the image or the operator's intent. A LLMUser is placing the same trust in a host operator as they would in a cloud provider — socially and contractually, not technically.
+
+This must be clearly communicated to LLMUsers. See also [`architecture_overview.md`](./architecture_overview.md) §5.
 
 ---
 
@@ -321,4 +323,4 @@ They do not protect against a **malicious LLMHost operator**. Root on the host c
 | **2** | Structured tool-call responses (file writes, shell commands on user machine) | Inference Proxy must parse structured output from llama.cpp and forward typed payloads rather than raw text. Session Manager must handle a richer protocol. |
 | **3** | Controlled internet access | Container networking gains a filtered egress proxy. The startup script must configure the container's DNS and routing through that proxy. No egress outside the allowed list. |
 | **4** | Multiple simultaneous sessions | Session Manager's binary session slot becomes a capacity counter or queue. Router Client must report current load. `--parallel N` in llama.cpp expands slot count. |
-| **Future** | Resource accounting | A metering layer inside the container tracks token throughput and reports to the router. |
+| **Future** | Cross-group resource accounting (federation between trusted groups) | A metering layer inside the container tracks token throughput and reports to the router. Router-to-router peering introduces the need for per-group accounting at the host level. |
