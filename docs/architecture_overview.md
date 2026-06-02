@@ -6,7 +6,11 @@
 
 ## 1. Purpose
 
-ShareGrid is a peer-to-peer compute-sharing network that allows participants to host and consume local LLM inference without relying on cloud providers. The system is designed around three roles: a router that coordinates the network, hosts that provide compute, and users that consume it.
+ShareGrid is a peer-to-peer compute-sharing network for **closed groups of trusted actors** — such as a university computer cluster, a company's internal infrastructure, or a group of collaborating individuals. It allows participants within such a group to host and consume local LLM inference without relying on cloud providers.
+
+ShareGrid is explicitly **not** designed as an open network where unknown or unvetted participants can join organically. Membership in a ShareGrid network is controlled out-of-band: a group administrator runs an LLMRouter and distributes its registration URL (which embeds the router's TLS certificate fingerprint) only to parties they trust. Possession of that URL is the entry credential for the network.
+
+The system is designed around three roles: a router that coordinates the network, hosts that provide compute, and users that consume it.
 
 ---
 
@@ -64,7 +68,7 @@ sequenceDiagram
     participant H as LLMHost (inside container)
     participant R as LLMRouter
 
-    O->>D: docker run (digest-pinned image,\nhardening flags, --restart=on-failure)
+    O->>D: docker run (operator-built image,\nhardening flags, registration URL, --restart=on-failure)
     D->>H: Start container processes
     H->>H: Generate ephemeral TLS keypair
     H->>R: Connect + register (TLS)<br/>Send: model metadata, port, TLS cert fingerprint
@@ -125,26 +129,34 @@ Security is a first-class concern. The threat model covers both the host side (p
 
 ### 5.1 Trust Boundary
 
-ShareGrid's security model protects against external and non-privileged threats. It has one explicit, inherent limitation:
+ShareGrid's security model protects against external and non-privileged threats within a closed, pre-trusted group. It has two explicit, inherent limitations:
 
-**A LLMHost operator with root access to their own machine is a trusted participant.** Root can read process memory, attach a debugger to any running process, and intercept traffic before encryption is applied. No transport choice, container hardening measure, or encryption of internal channels can prevent a determined root-level attacker on the host machine from accessing conversation data.
+**1. A LLMHost operator with root access to their own machine is a trusted participant.** Root can read process memory, attach a debugger to any running process, and intercept traffic before encryption is applied. No transport choice, container hardening measure, or encryption of internal channels can prevent a determined root-level attacker on the host machine from accessing conversation data.
 
 This is not unique to ShareGrid — it is true of every cloud provider. A LLMUser is placing the same trust in a host operator as they would in a managed cloud service: a social and contractual trust, not a technical guarantee. **LLMUsers must understand that they are trusting the operator of the host they connect to.**
 
 Hardware-level isolation (e.g. TEE/SGX enclaves) would be required to close this gap technically. That is out of scope for all current phases.
 
+**2. The router cannot verify the content of the Docker image a LLMHost is running.** When a host registers, the router authenticates the connection and issues a host key, but it has no mechanism to inspect or attest what software is inside the container. This is a fundamental limitation of the architecture: short of hardware attestation (TEE/SGX), there is no way for the router or users to cryptographically verify that the host is running a specific, unmodified image.
+
+**This limitation is the direct reason ShareGrid is designed for closed groups of trusted actors, not open participation.** Trust in a LLMHost is rooted in *possession of the registration URL*, which embeds the router's TLS certificate fingerprint and is distributed out-of-band by the group administrator only to parties they trust. A host that has registered is trusted because a human administrator chose to give that operator the registration URL — not because any technical mechanism has verified the image contents.
+
+As a consequence of this model, **LLMHost operators are expected to build their own images** with the LLM of their choice, applying the hardening requirements described in §5.4. No canonical "official" image is provided or implied. Operators take responsibility for the correctness and security of the image they run.
+
 ### 5.2 Threat Model Summary
 
 | Threat | Mitigation |
 |--------|------------|
-| Malicious actor posing as a legitimate LLMHost | Router-issued Ed25519-signed host keys; hosts must re-register on reconnect |
+| Unauthorized actor registering a host (does not have the registration URL) | Registration URL is distributed out-of-band by the group administrator to trusted parties only; URL embeds the router's TLS certificate fingerprint, preventing MITM interception |
+| Registered host impersonating a different registered host | Router-issued Ed25519-signed host keys are unique per registration; hosts must re-register on reconnect |
 | Eavesdropping on User ↔ Host traffic | All User ↔ Host communication is a direct, encrypted TLS channel |
-| LLM or host process accessing the host machine | Hardened Docker container; no host networking, no host IPC, minimal capabilities |
+| LLM or host process accessing the host machine | Hardened Docker container; no host networking, no host IPC, minimal capabilities (see §5.4) |
 | LLM output containing malware targeting the user | Phase 1: output is plain text only — no execution, no file writes on user machine |
 | Information leaking between sessions on the same host | llama.cpp slot explicitly erased after each session; container restarted if erase fails |
 | Host LLM used as internet proxy | Phase 1: no internet access configured in container |
 | Non-root host process accessing the inference channel | Unix socket with `chmod 700`; no network port exposed for internal traffic |
-| Malicious LLMHost operator (root) | Out of scope — see trust boundary above |
+| Malicious LLMHost operator (root) | Out of scope — see §5.1; trust is social/contractual within the closed group |
+| Router cannot verify host image contents | By design — trust is rooted in registration URL possession, not image attestation; see §5.1 |
 
 ### 5.3 Security Architecture Diagram
 
@@ -176,7 +188,7 @@ graph LR
 
 ### 5.4 Docker Hardening Requirements (Phase 1)
 
-The Docker container running the LLMHost must be configured with:
+LLMHost operators build their own Docker images (see §5.1 and §9). The following hardening requirements apply to any image built for use in a ShareGrid network. Operators are responsible for ensuring their image and `docker run` invocation comply.
 
 - No volume mounts to the host filesystem
 - No host network mode; one port published externally (Session Manager TLS listener only); all internal traffic uses a Unix socket inside the container
@@ -203,8 +215,9 @@ The Docker container running the LLMHost must be configured with:
 
 ### LLMHost
 
-- Is a single Docker container; the host operator's only responsibility is running `docker run` with the correct hardening flags and digest-pinned image
-- Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter
+- Is a single Docker container; **operators build their own image** with their chosen LLM (llama.cpp is the reference implementation; others may be substituted provided the internal API contract is met)
+- The operator's responsibilities are: building a compliant image (see §5.4), and running it with the correct hardening flags and the group's registration URL
+- Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter using the provided registration URL
 - Stores the router-issued host key in memory and enforces it on all incoming LLMUser connections
 - Accepts one session at a time (Phase 1 constraint)
 - Wipes all session state (llama.cpp KV cache) on session end; exits the container if the wipe cannot be confirmed
@@ -248,7 +261,7 @@ The following table summarises how later phases extend the architecture. These c
 | **2** | OpenCode provider integration. Local file/command execution on user machine with sandboxing. | LLMUser gains a sandboxed execution layer. Host responses may carry structured tool-call payloads. |
 | **3** | Controlled internet access for LLMHost. | Docker container gains a filtered egress proxy. Router or a separate policy service controls allowed domains. |
 | **4** | Multiple hosts and users. Session reservation (1 user per host per session). | Router gains session-state tracking and host-availability logic. Hosts must signal busy/free status. |
-| **Future** | Multiple routers, load balancing, resource accounting, model-selection assistant. | Router becomes a distributed or federated service. Adds resource metering and request classification layers. |
+| **Future** | Federation between independent trusted groups (e.g. inter-university, inter-department). Cross-group resource accounting. Model-selection assistant. | Router-to-router peering with explicit trust grants between group administrators. Resource metering and request classification layers. Each group retains control of its own membership and registration URL. |
 
 ---
 
@@ -260,14 +273,20 @@ The router only brokers the initial handshake. All inference traffic flows direc
 **Router-issued host keys**
 Rather than a full PKI in Phase 1, the router issues an Ed25519-signed token to each host on registration. The user receives this token in the host list and presents it when opening a session. The host verifies it against the router's public key — no router involvement needed at session time.
 
-**Digest-pinned container image**
-The LLMHost image is pinned by `sha256` digest in the host configuration. Docker enforces the check natively before the container starts; a mismatch is a fatal error. This makes image updates deliberate and auditable without requiring external tooling.
+**Closed trusted-actor network**
+ShareGrid does not attempt to be an open network where any willing participant can join. The router cannot verify the Docker image content running on a host, and no practical technical mechanism short of hardware attestation can close that gap. Rather than treat this as a security hole to patch, the architecture embraces it as a design boundary: ShareGrid is explicitly scoped to closed groups where trust is established out-of-band — a university department, a company's internal team, a group of collaborating researchers. The group administrator controls who receives the registration URL; possession of that URL is the entry credential.
+
+**Operator-built host images**
+No canonical LLMHost image is provided or required. Operators build their own Docker image with the LLM of their choice — llama.cpp is the reference implementation and recommended default, but any inference engine can be used provided the internal API contract is satisfied. Operators are responsible for meeting the hardening requirements in §5.4. This gives operators full control over model selection, quantisation, and configuration, while keeping the system lightweight (no image distribution infrastructure required).
+
+**Registration URL as network entry credential**
+The LLMRouter generates a TLS certificate on first start and exposes a registration URL that embeds the certificate's fingerprint (SHA key). The administrator distributes this URL out-of-band to trusted hosts and users. The embedded fingerprint pins the TLS connection to the legitimate router, preventing MITM attacks at registration time. A party without the URL cannot register as a host or user; a party who intercepts the URL over an insecure channel cannot exploit it without also being able to impersonate the router's TLS certificate.
 
 **llama.cpp in a shared keep-alive container**
 Weights are loaded once at container start rather than per session. A slot-erase call clears the KV cache after each session; the container restarts if the erase cannot be confirmed. This eliminates per-session startup latency and keeps memory cost fixed.
 
 **All host logic inside the Docker container**
-The router client, session manager, and inference proxy run inside the same container as llama.cpp. The host operator's only action is a single `docker run`; no bind mounts or separate host-side processes are required. Each container restart generates a new ephemeral TLS keypair and re-registers with the router.
+The router client, session manager, and inference proxy run inside the same container as the inference engine. Once an operator has built their image, deployment is a single `docker run` with the hardening flags and registration URL; no bind mounts or separate host-side processes are required. Each container restart generates a new ephemeral TLS keypair and re-registers with the router.
 
 **Stateless session teardown**
 The LLMHost destroys all session context after a session ends. This is a security requirement to prevent cross-session information leakage, and is foundational for Phase 4's multi-user model.
