@@ -38,6 +38,7 @@
 | 6 | Integration tests | 5 | Phase 3D |
 | 7 | CI pipeline | 1 | Phase 5 |
 | 8 | Prompt cancellation (user side) | 4 | Phases 3B, 3C, host Phase 8 |
+| 9 | Role-based access control (user access URL) | 4 | Phase 8 + router plan Phase 9 (S-13, S-14) |
 
 ---
 
@@ -190,6 +191,21 @@ Adds contextual Ctrl+C support: cancels the in-flight response when generation i
 
 ---
 
+## Phase 9 — Role-based access control (user access URL)
+
+Adds the `key` credential to the user's router handshake flow. The router now validates a role-specific secret on every incoming connection before serving the host list; the LLMUser Router Client must parse that secret from its URL and include it in the `HostListRequest`.
+
+**Prerequisite:** Router plan Phase 9 tasks 9-1 (S-13) and 9-2 (S-14) must be merged before this phase begins — the updated `parseFingerprintFromUrl` return type and the new `roleKey` field on `HostListRequest` are required here.
+
+| #    | Task                                                                                                                                                                                                                                                                                                                                                                                                                                         | File / Location                               | Status |
+|------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------|:------:|
+| 9-1  | Update `config.ts` Zod schema: `SHAREGRID_ROUTER_URL` must contain both `fp=sha256:[0-9a-f]+` **and** `key=[A-Za-z0-9_-]+` query params. Fail closed (exit code 1) if `key` is absent. Add unit test cases to `tests/unit/config.test.ts`: URL containing `fp` but no `key` → exits 1; URL containing neither → exits 1; URL containing both → parses correctly. Update the example URL in `docker-run.example.sh` to show the full `?fp=sha256:...&key=u-...` format. | `src/config.ts`, `tests/unit/config.test.ts`, `docker-run.example.sh` | `[ ]`  |
+| 9-2  | Update `createRouterClient` → `fetchHostList()`. The `parseFingerprintFromUrl` call (S-13) now returns `{ host, port, fingerprint, roleKey }`. Extract `roleKey` and pass it as the `roleKey` field in the `HostListRequest` sent to the router (S-14). No other changes to the handshake flow. | `src/router-client.ts`                        | `[ ]`  |
+| 9-3  | Update unit tests for `router-client.ts`. Cases: `HostListRequest` payload sent to the mock router includes the correct `roleKey` value extracted from the configured URL; URL missing `key` causes `parseFingerprintFromUrl` to throw `RoleKeyMissingError`, which propagates cleanly out of `fetchHostList()`. | `tests/unit/router-client.test.ts`            | `[ ]`  |
+| 9-4  | Update integration tests in `tests/integration/startup.test.ts`. Add test case: `SHAREGRID_ROUTER_URL` is configured with a valid `fp` and a syntactically valid `key`, but the mock router rejects the connection because the `key` does not match its user secret — verify the CLI exits with a clear error message and a non-zero exit code without displaying a host list or attempting any session. | `tests/integration/startup.test.ts`           | `[ ]`  |
+
+---
+
 ## Status ledger
 
 Update this table whenever a task changes state. The phase rows are the source of truth; do not let the per-task tables and this ledger diverge.
@@ -208,7 +224,8 @@ Update this table whenever a task changes state. The phase rows are the source o
 | 6     | Integration tests                      | 5     | 5    | 0           | 0       | 0         |
 | 7     | CI pipeline                            | 1     | 1    | 0           | 0       | 0         |
 | 8     | Prompt cancellation (user side)        | 4     | 4    | 0           | 0       | 0         |
-| —     | **Total**                              | **46**| **46**| **0**      | **0**   | **0**     |
+| 9     | Role-based access control (user access URL) | 4 | 0    | 0           | 0       | 4         |
+| —     | **Total**                              | **50**| **46**| **0**      | **0**   | **4**     |
 
 ### Notes / blockers
 
