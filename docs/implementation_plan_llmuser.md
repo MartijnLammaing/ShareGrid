@@ -91,10 +91,10 @@ Replace the Phase 1 text-based session protocol with the Phase 2 inference tunne
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 5-1  | Create `src/api-server.ts`. Use Node.js built-in `node:http` (`createServer`) — no framework dependency. Export `createApiServer(deps: ApiServerDeps): ApiServer` where `ApiServerDeps = { config: Config, modelRegistry: ModelRegistry, sessionPool: HostSessionPool, logger: Logger }` and `ApiServer = { start(): Promise<void>; stop(): Promise<void> }`. Bind to `127.0.0.1:config.SHAREGRID_LISTEN_PORT`. | `src/api-server.ts` | `[ ]` |
-| 5-2  | Implement `GET /v1/models`: call `modelRegistry.getModels()`, return `{ object: 'list', data: [...] }` as JSON with `Content-Type: application/json`. On error (router unreachable): return HTTP 503 with a JSON error body. | `src/api-server.ts` | `[ ]` |
-| 5-3  | Implement `POST /v1/chat/completions`: (a) parse JSON request body; (b) extract `model`; force `stream: true` in the body (set it if absent); (c) call `modelRegistry.resolveHost(model)` — return 404 on `HostNotFoundError`; (d) call `sessionPool.acquire(host)` — return 503 on `HostBusyError`; (e) set SSE response headers (`Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`); (f) create an `AbortController`; (g) call `session.sendInferenceRequest(body, onChunk, signal)` where `onChunk` writes each SSE line to the response; (h) on stream end, end the HTTP response; (i) on HTTP request `'close'` event (client disconnects): call `controller.abort()`; (j) on error: return 500. Unrecognised paths → 404. | `src/api-server.ts` | `[ ]` |
-| 5-4  | Unit tests for API Server. Cases: `GET /v1/models` returns correct OpenAI model list shape; `GET /v1/models` returns 503 when model registry throws; `POST /v1/chat/completions` with valid model → `sendInferenceRequest` called with correct body; SSE lines are forwarded verbatim as HTTP response chunks; `data: [DONE]` ends the response; client disconnect triggers `controller.abort()`; unknown model → 404; host busy → 503; unknown path → 404. | `tests/unit/api-server.test.ts` | `[ ]` |
+| 5-1  | Create `src/api-server.ts`. Use Node.js built-in `node:http` (`createServer`) — no framework dependency. Export `createApiServer(deps: ApiServerDeps): ApiServer` where `ApiServerDeps = { config: Config, modelRegistry: ModelRegistry, sessionPool: HostSessionPool, logger: Logger }` and `ApiServer = { start(): Promise<void>; stop(): Promise<void> }`. Bind to `127.0.0.1:config.SHAREGRID_LISTEN_PORT`. | `src/api-server.ts` | `[x]` |
+| 5-2  | Implement `GET /v1/models`: call `modelRegistry.getModels()`, return `{ object: 'list', data: [...] }` as JSON with `Content-Type: application/json`. On error (router unreachable): return HTTP 503 with a JSON error body. | `src/api-server.ts` | `[x]` |
+| 5-3  | Implement `POST /v1/chat/completions`: (a) parse JSON request body; (b) extract `model`; force `stream: true` in the body (set it if absent); (c) call `modelRegistry.resolveHost(model)` — return 404 on `HostNotFoundError`; (d) call `sessionPool.acquire(host)` — return 503 on `HostBusyError`; (e) set SSE response headers (`Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`); (f) create an `AbortController`; (g) call `session.sendInferenceRequest(body, onChunk, signal)` where `onChunk` writes each SSE line to the response; (h) on stream end, end the HTTP response; (i) on HTTP response `'close'` event (client disconnects): call `controller.abort()`; (j) on error: return 500. Unrecognised paths → 404. | `src/api-server.ts` | `[x]` |
+| 5-4  | Unit tests for API Server. Cases: `GET /v1/models` returns correct OpenAI model list shape; `GET /v1/models` returns 503 when model registry throws; `POST /v1/chat/completions` with valid model → `sendInferenceRequest` called with correct body; SSE lines are forwarded verbatim as HTTP response chunks; `data: [DONE]` ends the response; client disconnect triggers `controller.abort()`; unknown model → 404; host busy → 503; unknown path → 404. | `tests/unit/api-server.test.ts` | `[x]` |
 
 ---
 
@@ -158,19 +158,19 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 | 2 | Session Client update | 3 | 3 | 0 | 0 | 0 |
 | 3 | Host Session Pool | 2 | 2 | 0 | 0 | 0 |
 | 4 | Model Registry | 2 | 2 | 0 | 0 | 0 |
-| 5 | API Server | 4 | 0 | 0 | 0 | 4 |
+| 5 | API Server | 4 | 4 | 0 | 0 | 0 |
 | 6 | CLI update | 2 | 0 | 0 | 0 | 2 |
 | 7 | Entry point + Dockerfile | 3 | 0 | 0 | 0 | 3 |
 | 8 | start-dev.sh update | 2 | 0 | 0 | 0 | 2 |
 | 9 | Unit tests | 4 | 0 | 0 | 0 | 4 |
 | 10 | Integration tests | 3 | 0 | 0 | 0 | 3 |
-| — | **Total** | **27** | **9** | **0** | **0** | **18** |
+| — | **Total** | **27** | **13** | **0** | **0** | **14** |
 
 ### Notes / blockers
 
-- **Phases 1–4 complete.** Config schema, Session Client, Host Session Pool, and Model Registry all implemented and tested (123 unit tests green).
+- **Phases 1–5 complete.** Config schema, Session Client, Host Session Pool, Model Registry, and API Server all implemented and tested (132 unit tests green).
 - **Phase 0 prerequisite satisfied.** `sharegrid-user/sharegrid-shared` updated to commit `fbffc67` (Phase 2 protocol types).
-- **Phases 5–10 not started.** Natural next phases: 5 (API Server) depends on Phases 3+4, then 6 (CLI update), 7 (entry point + Dockerfile), 8 (start-dev.sh), and finally 9–10 (tests).
+- **Phases 6–10 not started.** Natural next phases: 6 (CLI update) and 7 (entry point + Dockerfile) can proceed, then 8 (start-dev.sh), and finally 9–10 (tests).
 
 ---
 
