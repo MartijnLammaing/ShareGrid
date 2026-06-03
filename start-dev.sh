@@ -40,8 +40,17 @@ clear_port() {
   fi
 }
 
-# ── Step 1: Port conflict cleanup ─────────────────────────────────────────────
+# ── Step 1: Cleanup ───────────────────────────────────────────────────────────
 
+# Force-remove named containers first (covers running, paused, and — critically
+# — "Exited" containers that are about to be restarted by --restart=on-failure).
+# docker ps only shows running containers, so clear_port alone cannot catch a
+# host that exited between restarts and would come back with a stale router URL.
+log "Removing existing named containers (if any)..."
+docker rm -f "$ROUTER_CONTAINER" 2>/dev/null || true
+docker rm -f "$HOST_CONTAINER"   2>/dev/null || true
+
+# Also evict any other containers that happen to be occupying the same ports.
 log "Checking for port conflicts..."
 clear_port "$ROUTER_PORT"
 clear_port "$HOST_PORT"
@@ -82,28 +91,49 @@ docker run -d \
   -e SHAREGRID_LISTEN_ADDR="0.0.0.0:${ROUTER_PORT}" \
   sharegrid-router
 
-# ── Step 5: Extract router URL ────────────────────────────────────────────────
+# ── Step 5: Extract router URLs (host registration + user access) ─────────────
+#
+# After Phase 9 the router prints two separate URL blocks:
+#
+#   HOST REGISTRATION URLs (distribute only to host operators):
+#     https://<ip>:<port>?fp=sha256:<hex>&key=<hostSecret>   [eth0]
+#
+#   USER ACCESS URLs (distribute only to end users):
+#     https://<ip>:<port>?fp=sha256:<hex>&key=<userSecret>   [eth0]
+#
+# We extract the first non-loopback private-IP URL from each block separately.
 
 log "Waiting for router startup banner..."
-ROUTER_URL=""
+HOST_ROUTER_URL=""
+USER_ROUTER_URL=""
+URL_PATTERN='https://(10\.[0-9.]+|172\.[0-9.]+|192\.168\.[0-9.]+):[0-9]+\?fp=sha256:[0-9a-f]{64}&key=[A-Za-z0-9_-]+'
+
 for i in $(seq 1 30); do
-  ROUTER_URL=$(docker logs "$ROUTER_CONTAINER" 2>&1 \
-    | grep -oE 'https://(10\.[0-9.]+|172\.[0-9.]+|192\.168\.[0-9.]+):[0-9]+\?fp=sha256:[0-9a-f]{64}' \
-    | head -1 || true)
-  if [[ -n "$ROUTER_URL" ]]; then
+  LOGS=$(docker logs "$ROUTER_CONTAINER" 2>&1)
+
+  HOST_ROUTER_URL=$(echo "$LOGS" \
+    | grep -A 20 "HOST REGISTRATION URLs" \
+    | grep -m 1 -oE "$URL_PATTERN" || true)
+
+  USER_ROUTER_URL=$(echo "$LOGS" \
+    | grep -A 20 "USER ACCESS URLs" \
+    | grep -m 1 -oE "$URL_PATTERN" || true)
+
+  if [[ -n "$HOST_ROUTER_URL" && -n "$USER_ROUTER_URL" ]]; then
     break
   fi
   sleep 1
 done
 
-if [[ -z "$ROUTER_URL" ]]; then
-  log "ERROR: Router did not produce a startup URL within 30s."
+if [[ -z "$HOST_ROUTER_URL" || -z "$USER_ROUTER_URL" ]]; then
+  log "ERROR: Router did not produce both startup URLs within 30s."
   log "Router logs:"
   docker logs "$ROUTER_CONTAINER" 2>&1 || true
   exit 1
 fi
 
-log "Router URL: ${ROUTER_URL}"
+log "Host registration URL: ${HOST_ROUTER_URL}"
+log "User access URL:       ${USER_ROUTER_URL}"
 
 # ── Step 6: Start host ────────────────────────────────────────────────────────
 
@@ -118,7 +148,7 @@ docker run -d \
   --ipc=none \
   --restart=on-failure \
   -p "${HOST_PORT}:${HOST_PORT}" \
-  -e SHAREGRID_ROUTER_URL="$ROUTER_URL" \
+  -e SHAREGRID_ROUTER_URL="$HOST_ROUTER_URL" \
   -e SHAREGRID_LISTEN_PORT="$HOST_PORT" \
   sharegrid-host
 
@@ -146,5 +176,5 @@ log "Host registered. Starting user session."
 log "Launching sharegrid-user..."
 exec docker run -it --rm \
   --network "$NETWORK" \
-  -e SHAREGRID_ROUTER_URL="$ROUTER_URL" \
+  -e SHAREGRID_ROUTER_URL="$USER_ROUTER_URL" \
   sharegrid-user
