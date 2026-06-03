@@ -1,6 +1,6 @@
 # LLMRouter — Component Architecture
 
-> **Scope:** Phase 1 (MVP). See [`architecture_overview.md`](./architecture_overview.md) for system-wide context, security model, and the phase roadmap.
+> **Scope:** Phase 1 (MVP) and beyond. The LLMRouter is **unchanged in Phase 2** — no router code, configuration, or protocol changes are required for OpenCode provider integration. See [`architecture_overview.md`](./architecture_overview.md) for system-wide context, security model, and the phase roadmap.
 
 ---
 

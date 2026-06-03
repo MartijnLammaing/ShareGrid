@@ -1,6 +1,6 @@
 # ShareGrid — System Architecture Overview
 
-> **Scope:** Phase 1 (MVP). Future-phase concerns are noted where they influence design decisions, but are not implemented in Phase 1.
+> **Scope:** Phase 1 (MVP) and Phase 2 (OpenCode provider integration + tool-call execution). Future-phase concerns are noted where they influence design decisions, but are not implemented yet.
 
 ---
 
@@ -224,17 +224,17 @@ LLMHost operators build their own Docker images (see §5.1 and §9). The followi
 - The operator's responsibilities are: building a compliant image (see §5.4), and running it with the correct hardening flags and the group's **host registration URL**
 - Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter using the host registration URL (which carries the host-specific `key` credential)
 - Stores the router-issued host key in memory and enforces it on all incoming LLMUser connections
-- Accepts one session at a time (Phase 1 constraint)
-- Wipes all session state (llama.cpp KV cache) on session end; exits the container if the wipe cannot be confirmed
+- Accepts one session at a time (Phase 1–2 constraint; Phase 4 expands this)
+- Accepts full OpenAI-format inference requests (messages, tools, tool_choice) and streams raw SSE lines back — the host is a transparent tunnel between the user adapter and llama.cpp
+- Wipes all session state (llama.cpp KV cache) between inference turns and on session end; exits the container if the wipe cannot be confirmed
 
 ### LLMUser
 
-- CLI interface; no GUI in Phase 1
-- Connects to the configured LLMRouter on startup using the **user access URL** (which carries the user-specific `key` credential)
-- Presents the user with a list of available hosts and their model metadata
-- Opens a direct TLS connection to the selected LLMHost
-- Sends prompts and displays responses; no local file I/O or command execution in Phase 1
-- Ctrl+C during generation cancels the in-flight response without closing the session; Ctrl+C at the input prompt exits the program
+- **Phase 2:** Runs as a local HTTP server exposing an OpenAI-compatible API (`GET /v1/models`, `POST /v1/chat/completions`). OpenCode connects to it as a custom provider, enabling full agentic coding workflows with tool calls executed locally on the user machine.
+- **CLI mode** (optional, standalone): An interactive terminal session — host selection, prompt/response loop, Ctrl+C cancellation — for use without OpenCode.
+- Connects to the configured LLMRouter using the **user access URL** (which carries the user-specific `key` credential) to fetch the available host list
+- Opens a direct, persistent TLS session to the selected LLMHost; reuses the session for the duration of an OpenCode conversation
+- Tool execution is handled by OpenCode's built-in tool system; the LLMUser adapter is a transparent proxy — it does not execute, inspect, or restrict tool calls. The perimeter is configured in the user's `opencode.json` via OpenCode's `permission` setting.
 
 ---
 
@@ -263,7 +263,7 @@ The following table summarises how later phases extend the architecture. These c
 | Phase | Addition | Architectural Impact |
 |-------|----------|----------------------|
 | **1** | MVP: 1 host, 1 router, 1 user. CLI only. No internet. No execution. | Baseline architecture described in this document. → [Phase 1 completion summary](phase_1_summary.md) |
-| **2** | OpenCode provider integration. Local file/command execution on user machine with sandboxing. | LLMUser gains a sandboxed execution layer. Host responses may carry structured tool-call payloads. |
+| **2** | OpenCode provider integration. LLMUser becomes an OpenAI-compatible HTTP server. Tool execution on user machine governed by OpenCode's permission system. | LLMUser is redesigned as a dual-mode service (HTTP provider adapter + optional CLI). LLMHost Inference Proxy becomes a raw OpenAI pass-through tunnel. `sharegrid-shared` protocol updated: Phase 1 prompt/response types removed; `InferenceRequestPayload` and `InferenceResponseChunk` added. |
 | **3** | Controlled internet access for LLMHost. | Docker container gains a filtered egress proxy. Router or a separate policy service controls allowed domains. |
 | **4** | Multiple hosts and users. Session reservation (1 user per host per session). | Router gains session-state tracking and host-availability logic. Hosts must signal busy/free status. |
 | **Future** | Federation between independent trusted groups (e.g. inter-university, inter-department). Cross-group resource accounting. Model-selection assistant. | Router-to-router peering with explicit trust grants between group administrators. Resource metering and request classification layers. Each group retains control of its own membership and registration URL. |
