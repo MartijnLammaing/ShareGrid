@@ -44,14 +44,16 @@
 
 See **LLMHost Phase 2 plan, Phase 0** (tasks S-15, S-16, S-17). The `sharegrid-user/sharegrid-shared` submodule pointer must be updated to the commit that includes those changes before any Phase 1 work begins here.
 
+**Status: complete.** Submodule pointer updated to commit `fbffc67`.
+
 ---
 
 ## Phase 1 — Config update
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 1-1  | Update `src/config.ts` Zod schema. Add `SHAREGRID_LISTEN_PORT` (coerced integer, 1–65535, default `3000`) and `SHAREGRID_MODE` (enum `'server' \| 'cli'`, default `'server'`). Keep `SHAREGRID_ROUTER_URL` validation unchanged. Export the updated `Config` type. On invalid input, write a structured error to `console.error` and call `process.exit(1)`. | `src/config.ts` | `[ ]` |
-| 1-2  | Update unit tests for `config.ts`. Cases: `SHAREGRID_LISTEN_PORT` missing → defaults to `3000`; `SHAREGRID_LISTEN_PORT` out of range → exits 1; `SHAREGRID_MODE` missing → defaults to `'server'`; `SHAREGRID_MODE` invalid value → exits 1; both new fields valid → parses correctly. | `tests/unit/config.test.ts` | `[ ]` |
+| 1-1  | Update `src/config.ts` Zod schema. Add `SHAREGRID_LISTEN_PORT` (coerced integer, 1–65535, default `3000`) and `SHAREGRID_MODE` (enum `'server' \| 'cli'`, default `'server'`). Keep `SHAREGRID_ROUTER_URL` validation unchanged. Export the updated `Config` type. On invalid input, write a structured error to `console.error` and call `process.exit(1)`. | `src/config.ts` | `[x]` |
+| 1-2  | Update unit tests for `config.ts`. Cases: `SHAREGRID_LISTEN_PORT` missing → defaults to `3000`; `SHAREGRID_LISTEN_PORT` out of range → exits 1; `SHAREGRID_MODE` missing → defaults to `'server'`; `SHAREGRID_MODE` invalid value → exits 1; both new fields valid → parses correctly. | `tests/unit/config.test.ts` | `[x]` |
 
 ---
 
@@ -61,9 +63,9 @@ Replace the Phase 1 text-based session protocol with the Phase 2 inference tunne
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 2-1  | Rewrite `src/session-client.ts`. The client opens a TLS connection to the host (fingerprint-pinned), sends `session_open`, and handles `session_ack` / `session_reject`. Expose `sendInferenceRequest(body: string, onChunk: (sseLine: string) => void, signal: AbortSignal): Promise<void>`: sends an `inference_request` message, reads `inference_response_chunk` messages and calls `onChunk` for each `data` field, resolves when `data: [DONE]` is received. Expose `close(): void` — sends `session_close` and destroys the socket. Expose `abort(): void` — destroys the socket immediately (used for cancellation; host detects close and flushes its KV cache). | `src/session-client.ts` | `[ ]` |
-| 2-2  | The Session Client must handle the case where the `signal` is aborted while waiting for chunks: destroy the socket, return. Also handle socket errors: reject the `sendInferenceRequest` promise; mark the client as dead (so the Host Session Pool can detect it). Expose `isAlive(): boolean`. | `src/session-client.ts` | `[ ]` |
-| 2-3  | Unit tests for Session Client. Cases: `session_open` with valid token → `session_ack` received; `sendInferenceRequest` sends correct `inference_request` JSON; `onChunk` called for each `inference_response_chunk.data`; resolves on `data: [DONE]`; `abort()` destroys socket; `signal` abort → socket destroyed; `session_reject` with reason `busy` → rejects with `HostBusyError`; `session_reject` with reason `invalid_token` → rejects with `InvalidTokenError`. | `tests/unit/session-client.test.ts` | `[ ]` |
+| 2-1  | Rewrite `src/session-client.ts`. The client opens a TLS connection to the host (fingerprint-pinned), sends `session_open`, and handles `session_ack` / `session_reject`. Expose `sendInferenceRequest(body: string, onChunk: (sseLine: string) => void, signal: AbortSignal): Promise<void>`: sends an `inference_request` message, reads `inference_response_chunk` messages and calls `onChunk` for each `data` field, resolves when `data: [DONE]` is received. Expose `close(): void` — sends `session_close` and destroys the socket. Expose `abort(): void` — destroys the socket immediately (used for cancellation; host detects close and flushes its KV cache). | `src/session-client.ts` | `[x]` |
+| 2-2  | The Session Client must handle the case where the `signal` is aborted while waiting for chunks: destroy the socket, return. Also handle socket errors: reject the `sendInferenceRequest` promise; mark the client as dead (so the Host Session Pool can detect it). Expose `isAlive(): boolean`. | `src/session-client.ts` | `[x]` |
+| 2-3  | Unit tests for Session Client. Cases: `session_open` with valid token → `session_ack` received; `sendInferenceRequest` sends correct `inference_request` JSON; `onChunk` called for each `inference_response_chunk.data`; resolves on `data: [DONE]`; `abort()` destroys socket; `signal` abort → socket destroyed; `session_reject` with reason `busy` → rejects with `HostBusyError`; `session_reject` with reason `invalid_token` → rejects with `InvalidTokenError`. | `tests/unit/session-client.test.ts` | `[x]` |
 
 ---
 
@@ -152,8 +154,8 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 | Phase | Title | Total | Done | In progress | Blocked | Remaining |
 |-------|-------|:-----:|:----:|:-----------:|:-------:|:---------:|
 | 0 | `sharegrid-shared` (see host plan) | — | — | — | — | — |
-| 1 | Config update | 2 | 0 | 0 | 0 | 2 |
-| 2 | Session Client update | 3 | 0 | 0 | 0 | 3 |
+| 1 | Config update | 2 | 2 | 0 | 0 | 0 |
+| 2 | Session Client update | 3 | 3 | 0 | 0 | 0 |
 | 3 | Host Session Pool | 2 | 0 | 0 | 0 | 2 |
 | 4 | Model Registry | 2 | 0 | 0 | 0 | 2 |
 | 5 | API Server | 4 | 0 | 0 | 0 | 4 |
@@ -162,12 +164,13 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 | 8 | start-dev.sh update | 2 | 0 | 0 | 0 | 2 |
 | 9 | Unit tests | 4 | 0 | 0 | 0 | 4 |
 | 10 | Integration tests | 3 | 0 | 0 | 0 | 3 |
-| — | **Total** | **27** | **0** | **0** | **0** | **27** |
+| — | **Total** | **27** | **5** | **0** | **0** | **22** |
 
 ### Notes / blockers
 
-- Phase 0 (`sharegrid-shared`) is a hard prerequisite. Do not start Phase 1 until the submodule pointer in `sharegrid-user/sharegrid-shared` is updated to a commit containing tasks S-15, S-16, and S-17.
-- The LLMHost Phase 2 changes (host plan Phases 1–4) should be complete and deployed before end-to-end integration tests are run.
+- **Phases 1–2 complete.** Config schema updated (`SHAREGRID_LISTEN_PORT`, `SHAREGRID_MODE`); Session Client fully implemented (`sendInferenceRequest`, `abort`, `isAlive`); 9 new session-client unit tests + config tests green (112 total).
+- **Phase 0 prerequisite satisfied.** `sharegrid-user/sharegrid-shared` updated to commit `fbffc67` (Phase 2 protocol types).
+- **Phases 3–10 not started.** The natural next phase is 3 (Host Session Pool) and 4 (Model Registry) in parallel, then 5 (API Server), 6 (CLI update), 7 (entry point + Dockerfile), 8 (start-dev.sh), and finally 9–10 (tests).
 
 ---
 
