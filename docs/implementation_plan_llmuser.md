@@ -104,8 +104,8 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 6-1  | Update `src/cli.ts` to use the new protocol. Host selection: call `modelRegistry.getModels()` and `modelRegistry.resolveHost()` to get the `HostListEntry`. Session open: call `sessionPool.acquire(host)`. Prompt loop: construct a minimal OpenAI request body `{ model: host.modelName, messages: [...], stream: true }` with no tool definitions; call `sessionClient.sendInferenceRequest(body, onChunk, signal)`. In `onChunk`: parse each raw SSE line to extract `choices[0].delta.content` and write it to `process.stdout`. If the line contains a tool-call delta (`choices[0].delta.tool_calls`), write a brief `[tool call]` note. Ctrl+C during generation: set the `AbortController` signal. Ctrl+C at prompt: call `sessionClient.close()` and exit. | `src/cli.ts` | `[ ]` |
-| 6-2  | Unit tests for CLI. Cases: host list is displayed on startup; user selection resolves to the correct host; prompt input sends `inference_request` with correct messages array; `delta.content` values are written to stdout; Ctrl+C during generation calls `abort()`; Ctrl+C at prompt calls `close()` then exits. | `tests/unit/cli.test.ts` | `[ ]` |
+| 6-1  | Update `src/cli.ts` to use the new protocol. Host selection: call `modelRegistry.getModels()` and `modelRegistry.resolveHost()` to get the `HostListEntry`. Session open: call `sessionPool.acquire(host)`. Prompt loop: construct a minimal OpenAI request body `{ model: host.modelName, messages: [...], stream: true }` with no tool definitions; call `sessionClient.sendInferenceRequest(body, onChunk, signal)`. In `onChunk`: parse each raw SSE line to extract `choices[0].delta.content` and write it to `process.stdout`. If the line contains a tool-call delta (`choices[0].delta.tool_calls`), write a brief `[tool call]` note. Ctrl+C during generation: set the `AbortController` signal. Ctrl+C at prompt: call `sessionClient.close()` and exit. | `src/cli.ts` | `[x]` |
+| 6-2  | Unit tests for CLI. Cases: host list is displayed on startup; user selection resolves to the correct host; prompt input sends `inference_request` with correct messages array; `delta.content` values are written to stdout; Ctrl+C during generation calls `abort()`; Ctrl+C at prompt calls `close()` then exits. | `tests/unit/cli.test.ts` | `[x]` |
 
 ---
 
@@ -113,9 +113,9 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 7-1  | Rewrite `src/index.ts`. (a) Load config with `loadConfig()`. (b) Create `RouterClient`, `ModelRegistry`, `HostSessionPool`. (c) If `config.SHAREGRID_MODE === 'server'`: create `ApiServer` and start it; print the `opencode.json` snippet to stdout at startup; register `SIGTERM`/`SIGINT` handlers that call `sessionPool.closeAll()` then `apiServer.stop()`. (d) If `config.SHAREGRID_MODE === 'cli'`: run the CLI; on exit call `sessionPool.closeAll()`. | `src/index.ts` | `[ ]` |
-| 7-2  | Update `Dockerfile`. Add `EXPOSE 3000` for the HTTP server port. Default `CMD` starts in server mode (`node /app/bundle.cjs`). The CLI is available by passing `SHAREGRID_MODE=cli` as an environment variable or running `docker run -it -e SHAREGRID_MODE=cli ...`. | `Dockerfile` | `[ ]` |
-| 7-3  | Verify `npm run build` (esbuild) and `npm run typecheck` pass with zero errors. Verify the bundle starts cleanly in both modes. | `src/`, `Dockerfile` | `[ ]` |
+| 7-1  | Rewrite `src/index.ts`. (a) Load config with `loadConfig()`. (b) Create `RouterClient`, `ModelRegistry`, `HostSessionPool`. (c) If `config.SHAREGRID_MODE === 'server'`: create `ApiServer` and start it; print the `opencode.json` snippet to stdout at startup; register `SIGTERM`/`SIGINT` handlers that call `sessionPool.closeAll()` then `apiServer.stop()`. (d) If `config.SHAREGRID_MODE === 'cli'`: run the CLI; on exit call `sessionPool.closeAll()`. | `src/index.ts` | `[x]` |
+| 7-2  | Update `Dockerfile`. Add `EXPOSE 3000` for the HTTP server port. Default `CMD` starts in server mode (`node /app/bundle.cjs`). The CLI is available by passing `SHAREGRID_MODE=cli` as an environment variable or running `docker run -it -e SHAREGRID_MODE=cli ...`. | `Dockerfile` | `[x]` |
+| 7-3  | Verify `npm run build` (esbuild) and `npm run typecheck` pass with zero errors. Verify the bundle starts cleanly in both modes. | `src/`, `Dockerfile` | `[x]` |
 
 ---
 
@@ -159,18 +159,18 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 | 3 | Host Session Pool | 2 | 2 | 0 | 0 | 0 |
 | 4 | Model Registry | 2 | 2 | 0 | 0 | 0 |
 | 5 | API Server | 4 | 4 | 0 | 0 | 0 |
-| 6 | CLI update | 2 | 0 | 0 | 0 | 2 |
-| 7 | Entry point + Dockerfile | 3 | 0 | 0 | 0 | 3 |
+| 6 | CLI update | 2 | 2 | 0 | 0 | 0 |
+| 7 | Entry point + Dockerfile | 3 | 3 | 0 | 0 | 0 |
 | 8 | start-dev.sh update | 2 | 0 | 0 | 0 | 2 |
 | 9 | Unit tests | 4 | 0 | 0 | 0 | 4 |
 | 10 | Integration tests | 3 | 0 | 0 | 0 | 3 |
-| — | **Total** | **27** | **13** | **0** | **0** | **14** |
+| — | **Total** | **27** | **20** | **0** | **0** | **7** |
 
 ### Notes / blockers
 
-- **Phases 1–5 complete.** Config schema, Session Client, Host Session Pool, Model Registry, and API Server all implemented and tested (132 unit tests green).
+- **Phases 1–7 complete.** Config schema, Session Client, Host Session Pool, Model Registry, API Server, CLI, entry point (dual-mode), and Dockerfile all implemented and tested (134 unit tests green).
 - **Phase 0 prerequisite satisfied.** `sharegrid-user/sharegrid-shared` updated to commit `fbffc67` (Phase 2 protocol types).
-- **Phases 6–10 not started.** Natural next phases: 6 (CLI update) and 7 (entry point + Dockerfile) can proceed, then 8 (start-dev.sh), and finally 9–10 (tests).
+- **Phases 8–10 not started.** Remaining: 8 (start-dev.sh --server flag), then 9–10 (full test suites).
 
 ---
 
