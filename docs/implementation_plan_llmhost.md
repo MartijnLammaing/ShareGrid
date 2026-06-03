@@ -84,8 +84,8 @@ Replace the Phase 1 single-prompt message loop with a multi-turn inference loop.
 
 | #   | Task | File / Location | Status |
 |-----|------|-----------------|:------:|
-| 4-1 | Update integration test helpers (`tests/integration/helpers.ts`). Remove Phase 1 `PromptPayload` / `ResponseChunk` fixtures; add helpers that send `inference_request` messages and collect `inference_response_chunk` streams. Update mock router helpers to reflect the Phase 0 protocol changes. | `tests/integration/helpers.ts` | `[ ]` |
-| 4-2 | Rewrite integration tests. Cases: full session open → inference_request → SSE stream → inference_response_chunk stream → session stays open for second turn → session_close; socket abort mid-inference → `flushSlot` is called; host-busy rejection; idle timeout while waiting for next turn. Run `npm run test:integration`. | `tests/integration/session.test.ts` (create/update) | `[ ]` |
+| 4-1 | Update integration test helpers (`tests/integration/helpers.ts`). Remove Phase 1 `PromptPayload` / `ResponseChunk` fixtures; add helpers that send `inference_request` messages and collect `inference_response_chunk` streams. Update mock router helpers to reflect the Phase 0 protocol changes. | `tests/integration/helpers.ts` | `[x]` |
+| 4-2 | Rewrite integration tests. Cases: full session open → inference_request → SSE stream → inference_response_chunk stream → session stays open for second turn → session_close; socket abort mid-inference → `flushSlot` is called; host-busy rejection; idle timeout while waiting for next turn. Run `npm run test:integration`. | `tests/integration/session.test.ts` (create/update) | `[x]` |
 
 ---
 
@@ -99,13 +99,12 @@ Update this table whenever a task changes state.
 | 1 | Inference Proxy rewrite | 3 | 3 | 0 | 0 | 0 |
 | 2 | Session Manager rewrite | 4 | 4 | 0 | 0 | 0 |
 | 3 | Unit tests | 3 | 3 | 0 | 0 | 0 |
-| 4 | Integration tests | 2 | 0 | 0 | 0 | 2 |
-| — | **Total** | **15** | **13** | **0** | **0** | **2** |
+| 4 | Integration tests | 2 | 2 | 0 | 0 | 0 |
+| — | **Total** | **15** | **15** | **0** | **0** | **0** |
 
 ### Notes / blockers
 
-- **Phases 0–3 complete.** `forwardInference` implemented (raw SSE pass-through, abort+flush), Session Manager inference loop implemented (multi-turn, abort-aware teardown, idle timer reset per turn), all unit tests green (120 total).
-- **Phase 4 (integration tests)** is the remaining work. The mock host helper needs extending to speak the Phase 2 `inference_request`/`inference_response_chunk` protocol.
+- **All 15 tasks complete.** `forwardInference` implemented (raw SSE pass-through, abort+flush), Session Manager inference loop implemented (multi-turn, abort-aware teardown, idle timer reset per turn), all unit tests green (120 total), 5 integration tests green (happy path, slot busy, slot erase failure, slot release, multi-turn).
 
 ---
 

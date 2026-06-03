@@ -73,8 +73,8 @@ Replace the Phase 1 text-based session protocol with the Phase 2 inference tunne
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 3-1  | Create `src/host-session-pool.ts`. Interface: `HostSessionPool` with `acquire(host: HostListEntry): Promise<SessionClient>` and `closeAll(): Promise<void>`. Implementation: maintain a `Map<string, SessionClient>` keyed by `hostId`. `acquire`: if a live session exists (`.isAlive() === true`), return it; otherwise open a new `SessionClient` (instantiate, open, await `session_ack`), store it, and return it. On `session_ack` rejection propagate the error. `closeAll`: call `.close()` on all sessions; clear the map. | `src/host-session-pool.ts` | `[ ]` |
-| 3-2  | Unit tests for Host Session Pool. Cases: first `acquire` opens a new session; second `acquire` for same `hostId` returns the existing session without re-opening; after session dies (`isAlive()` returns `false`), next `acquire` opens a fresh session; `closeAll` calls `close()` on all sessions; `acquire` on host with busy slot propagates `HostBusyError`. | `tests/unit/host-session-pool.test.ts` | `[ ]` |
+| 3-1  | Create `src/host-session-pool.ts`. Interface: `HostSessionPool` with `acquire(host: HostListEntry): Promise<SessionClient>` and `closeAll(): Promise<void>`. Implementation: maintain a `Map<string, SessionClient>` keyed by `hostId`. `acquire`: if a live session exists (`.isAlive() === true`), return it; otherwise open a new `SessionClient` (instantiate, open, await `session_ack`), store it, and return it. On `session_ack` rejection propagate the error. `closeAll`: call `.close()` on all sessions; clear the map. | `src/host-session-pool.ts` | `[x]` |
+| 3-2  | Unit tests for Host Session Pool. Cases: first `acquire` opens a new session; second `acquire` for same `hostId` returns the existing session without re-opening; after session dies (`isAlive()` returns `false`), next `acquire` opens a fresh session; `closeAll` calls `close()` on all sessions; `acquire` on host with busy slot propagates `HostBusyError`. | `tests/unit/host-session-pool.test.ts` | `[x]` |
 
 ---
 
@@ -82,8 +82,8 @@ Replace the Phase 1 text-based session protocol with the Phase 2 inference tunne
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 4-1  | Create `src/model-registry.ts`. Interface: `ModelRegistry` with `getModels(): Promise<OpenAIModel[]>` and `resolveHost(modelId: string): Promise<HostListEntry>`. Implementation: call `RouterClient.fetchHostList()` on each `getModels()` call; cache the result for 30 seconds (configurable via `ModelRegistryOptions.cacheTtlMs`). Map each `HostListEntry` to `{ id: entry.modelName, object: 'model', owned_by: 'sharegrid' }`. `resolveHost`: find the first `HostListEntry` whose `modelName === modelId`; throw `HostNotFoundError` if none. Define `OpenAIModel` as `{ id: string; object: 'model'; owned_by: string }` — export it for use by the API Server. | `src/model-registry.ts` | `[ ]` |
-| 4-2  | Unit tests for Model Registry. Cases: `getModels()` calls router and maps correctly; second call within TTL uses cache without calling router again; call after TTL expiry re-fetches; `resolveHost` returns the correct entry; `resolveHost` throws `HostNotFoundError` for unknown model. | `tests/unit/model-registry.test.ts` | `[ ]` |
+| 4-1  | Create `src/model-registry.ts`. Interface: `ModelRegistry` with `getModels(): Promise<OpenAIModel[]>` and `resolveHost(modelId: string): Promise<HostListEntry>`. Implementation: call `RouterClient.fetchHostList()` on each `getModels()` call; cache the result for 30 seconds (configurable via `ModelRegistryOptions.cacheTtlMs`). Map each `HostListEntry` to `{ id: entry.modelName, object: 'model', owned_by: 'sharegrid' }`. `resolveHost`: find the first `HostListEntry` whose `modelName === modelId`; throw `HostNotFoundError` if none. Define `OpenAIModel` as `{ id: string; object: 'model'; owned_by: string }` — export it for use by the API Server. | `src/model-registry.ts` | `[x]` |
+| 4-2  | Unit tests for Model Registry. Cases: `getModels()` calls router and maps correctly; second call within TTL uses cache without calling router again; call after TTL expiry re-fetches; `resolveHost` returns the correct entry; `resolveHost` throws `HostNotFoundError` for unknown model. | `tests/unit/model-registry.test.ts` | `[x]` |
 
 ---
 
@@ -156,21 +156,21 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 | 0 | `sharegrid-shared` (see host plan) | — | — | — | — | — |
 | 1 | Config update | 2 | 2 | 0 | 0 | 0 |
 | 2 | Session Client update | 3 | 3 | 0 | 0 | 0 |
-| 3 | Host Session Pool | 2 | 0 | 0 | 0 | 2 |
-| 4 | Model Registry | 2 | 0 | 0 | 0 | 2 |
+| 3 | Host Session Pool | 2 | 2 | 0 | 0 | 0 |
+| 4 | Model Registry | 2 | 2 | 0 | 0 | 0 |
 | 5 | API Server | 4 | 0 | 0 | 0 | 4 |
 | 6 | CLI update | 2 | 0 | 0 | 0 | 2 |
 | 7 | Entry point + Dockerfile | 3 | 0 | 0 | 0 | 3 |
 | 8 | start-dev.sh update | 2 | 0 | 0 | 0 | 2 |
 | 9 | Unit tests | 4 | 0 | 0 | 0 | 4 |
 | 10 | Integration tests | 3 | 0 | 0 | 0 | 3 |
-| — | **Total** | **27** | **5** | **0** | **0** | **22** |
+| — | **Total** | **27** | **9** | **0** | **0** | **18** |
 
 ### Notes / blockers
 
-- **Phases 1–2 complete.** Config schema updated (`SHAREGRID_LISTEN_PORT`, `SHAREGRID_MODE`); Session Client fully implemented (`sendInferenceRequest`, `abort`, `isAlive`); 9 new session-client unit tests + config tests green (112 total).
+- **Phases 1–4 complete.** Config schema, Session Client, Host Session Pool, and Model Registry all implemented and tested (123 unit tests green).
 - **Phase 0 prerequisite satisfied.** `sharegrid-user/sharegrid-shared` updated to commit `fbffc67` (Phase 2 protocol types).
-- **Phases 3–10 not started.** The natural next phase is 3 (Host Session Pool) and 4 (Model Registry) in parallel, then 5 (API Server), 6 (CLI update), 7 (entry point + Dockerfile), 8 (start-dev.sh), and finally 9–10 (tests).
+- **Phases 5–10 not started.** Natural next phases: 5 (API Server) depends on Phases 3+4, then 6 (CLI update), 7 (entry point + Dockerfile), 8 (start-dev.sh), and finally 9–10 (tests).
 
 ---
 
