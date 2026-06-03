@@ -262,7 +262,7 @@ The following table summarises how later phases extend the architecture. These c
 
 | Phase | Addition | Architectural Impact |
 |-------|----------|----------------------|
-| **1** | MVP: 1 host, 1 router, 1 user. CLI only. No internet. No execution. | Baseline architecture described in this document. |
+| **1** | MVP: 1 host, 1 router, 1 user. CLI only. No internet. No execution. | Baseline architecture described in this document. → [Phase 1 completion summary](phase_1_summary.md) |
 | **2** | OpenCode provider integration. Local file/command execution on user machine with sandboxing. | LLMUser gains a sandboxed execution layer. Host responses may carry structured tool-call payloads. |
 | **3** | Controlled internet access for LLMHost. | Docker container gains a filtered egress proxy. Router or a separate policy service controls allowed domains. |
 | **4** | Multiple hosts and users. Session reservation (1 user per host per session). | Router gains session-state tracking and host-availability logic. Hosts must signal busy/free status. |
