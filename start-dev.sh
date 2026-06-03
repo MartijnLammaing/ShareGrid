@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
 # start-dev.sh — Start the full ShareGrid network stack on a single machine.
 #
-# Usage: ./start-dev.sh [--no-build]
+# Usage: ./start-dev.sh [--no-build] [--server]
 #
-# Starts sharegrid-router and sharegrid-host as background containers, then
-# becomes the sharegrid-user CLI session. Router and host keep running after
-# the user exits.
+# Default (no --server):
+#   Starts sharegrid-router and sharegrid-host as background containers, then
+#   becomes the sharegrid-user interactive CLI session. Router and host keep
+#   running after the user exits.
+#
+# --server:
+#   Starts router + host + sharegrid-user HTTP adapter as background containers.
+#   The adapter exposes an OpenAI-compatible API on port 3000 for use as an
+#   OpenCode provider. Prints the opencode.json snippet and exits; all three
+#   containers keep running.
+#   Stop all: docker rm -f sharegrid-router sharegrid-host sharegrid-user
+#
+# Flags can appear in any order and are independent.
 
 set -euo pipefail
 
@@ -13,15 +23,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ROUTER_PORT=8443
 HOST_PORT=9000
+USER_SERVER_PORT=3000
 NETWORK=sharegrid-net
 ROUTER_CONTAINER=sharegrid-router
 HOST_CONTAINER=sharegrid-host
+USER_CONTAINER=sharegrid-user
 MODEL_FILE="sharegrid-host/models/Phi-3.5-mini-instruct-IQ2_M.gguf"
 
 BUILD=1
-if [[ "${1:-}" == "--no-build" ]]; then
-  BUILD=0
-fi
+SERVER_MODE=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-build) BUILD=0 ;;
+    --server)   SERVER_MODE=1 ;;
+    *) echo "[start-dev] WARNING: unknown flag: $arg" ;;
+  esac
+done
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,11 +66,15 @@ clear_port() {
 log "Removing existing named containers (if any)..."
 docker rm -f "$ROUTER_CONTAINER" 2>/dev/null || true
 docker rm -f "$HOST_CONTAINER"   2>/dev/null || true
+docker rm -f "$USER_CONTAINER"   2>/dev/null || true
 
 # Also evict any other containers that happen to be occupying the same ports.
 log "Checking for port conflicts..."
 clear_port "$ROUTER_PORT"
 clear_port "$HOST_PORT"
+if [[ "$SERVER_MODE" -eq 1 ]]; then
+  clear_port "$USER_SERVER_PORT"
+fi
 
 # ── Step 2: Docker network ────────────────────────────────────────────────────
 
@@ -169,12 +190,48 @@ if [[ "$REGISTERED" -eq 0 ]]; then
   exit 1
 fi
 
-log "Host registered. Starting user session."
+log "Host registered."
 
-# ── Step 7: Become the user CLI ───────────────────────────────────────────────
+# ── Step 7: Start user ────────────────────────────────────────────────────────
 
-log "Launching sharegrid-user..."
-exec docker run -it --rm \
-  --network "$NETWORK" \
-  -e SHAREGRID_ROUTER_URL="$USER_ROUTER_URL" \
-  sharegrid-user
+if [[ "$SERVER_MODE" -eq 1 ]]; then
+  # ── Server mode: background HTTP adapter for OpenCode ─────────────────────
+
+  log "Starting sharegrid-user in server mode on port ${USER_SERVER_PORT}..."
+  docker run -d \
+    --name "$USER_CONTAINER" \
+    --network "$NETWORK" \
+    -p "${USER_SERVER_PORT}:${USER_SERVER_PORT}" \
+    -e SHAREGRID_ROUTER_URL="$USER_ROUTER_URL" \
+    -e SHAREGRID_MODE=server \
+    sharegrid-user
+
+  log "Provider adapter running on http://localhost:${USER_SERVER_PORT}/v1"
+  log ""
+  log "Add to your opencode.json:"
+  echo ""
+  cat <<EOF
+{
+  "provider": {
+    "sharegrid": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "ShareGrid",
+      "options": { "baseURL": "http://localhost:${USER_SERVER_PORT}/v1" }
+    }
+  }
+}
+EOF
+  echo ""
+  log "Router, host, and user adapter are all running in the background."
+  log "Stop all: docker rm -f ${ROUTER_CONTAINER} ${HOST_CONTAINER} ${USER_CONTAINER}"
+
+else
+  # ── CLI mode: interactive foreground session ──────────────────────────────
+
+  log "Launching sharegrid-user (CLI mode)..."
+  exec docker run -it --rm \
+    --network "$NETWORK" \
+    -e SHAREGRID_ROUTER_URL="$USER_ROUTER_URL" \
+    -e SHAREGRID_MODE=cli \
+    sharegrid-user
+fi

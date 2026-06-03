@@ -123,8 +123,8 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 8-1  | Add `--server` flag to `start-dev.sh`. When `--server` is passed: after host registration is confirmed, start the `sharegrid-user` container detached with `-p 3000:3000 -e SHAREGRID_MODE=server -e SHAREGRID_ROUTER_URL="$USER_ROUTER_URL"` and print the `opencode.json` config snippet. The script exits after printing rather than becoming the user process. When `--server` is not passed (default): keep the existing `exec docker run -it` behaviour for CLI mode, passing `SHAREGRID_MODE=cli`. | `start-dev.sh` | `[ ]` |
-| 8-2  | Update the `sharegrid-user` build step in `start-dev.sh` to include the host-side `--build-arg` equivalent for the user image if needed (the user image has no model file, so `MODEL_FILE` is not needed). Verify `./start-dev.sh --server` and `./start-dev.sh` both work end-to-end. | `start-dev.sh` | `[ ]` |
+| 8-1  | Add `--server` flag to `start-dev.sh`. When `--server` is passed: after host registration is confirmed, start the `sharegrid-user` container detached with `-p 3000:3000 -e SHAREGRID_MODE=server -e SHAREGRID_ROUTER_URL="$USER_ROUTER_URL"` and print the `opencode.json` config snippet. The script exits after printing rather than becoming the user process. When `--server` is not passed (default): keep the existing `exec docker run -it` behaviour for CLI mode, passing `SHAREGRID_MODE=cli`. | `start-dev.sh` | `[x]` |
+| 8-2  | Update the `sharegrid-user` build step in `start-dev.sh` to include the host-side `--build-arg` equivalent for the user image if needed (the user image has no model file, so `MODEL_FILE` is not needed). Verify `./start-dev.sh --server` and `./start-dev.sh` both work end-to-end. | `start-dev.sh` | `[x]` |
 
 ---
 
@@ -161,16 +161,16 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 | 5 | API Server | 4 | 4 | 0 | 0 | 0 |
 | 6 | CLI update | 2 | 2 | 0 | 0 | 0 |
 | 7 | Entry point + Dockerfile | 3 | 3 | 0 | 0 | 0 |
-| 8 | start-dev.sh update | 2 | 0 | 0 | 0 | 2 |
+| 8 | start-dev.sh update | 2 | 2 | 0 | 0 | 0 |
 | 9 | Unit tests | 4 | 0 | 0 | 0 | 4 |
 | 10 | Integration tests | 3 | 0 | 0 | 0 | 3 |
-| — | **Total** | **27** | **20** | **0** | **0** | **7** |
+| — | **Total** | **27** | **22** | **0** | **0** | **5** |
 
 ### Notes / blockers
 
-- **Phases 1–7 complete.** Config schema, Session Client, Host Session Pool, Model Registry, API Server, CLI, entry point (dual-mode), and Dockerfile all implemented and tested (134 unit tests green).
+- **Phases 1–8 complete.** Config schema, Session Client, Host Session Pool, Model Registry, API Server, CLI, entry point (dual-mode), Dockerfile, and start-dev.sh --server flag all implemented and tested (134 unit tests green).
 - **Phase 0 prerequisite satisfied.** `sharegrid-user/sharegrid-shared` updated to commit `fbffc67` (Phase 2 protocol types).
-- **Phases 8–10 not started.** Remaining: 8 (start-dev.sh --server flag), then 9–10 (full test suites).
+- **Phases 9–10 not started.** Remaining: full unit test sweep (Phase 9) and integration tests (Phase 10).
 
 ---
 
