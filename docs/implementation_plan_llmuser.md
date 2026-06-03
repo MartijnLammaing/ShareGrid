@@ -132,10 +132,10 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 9-1  | Run the full unit test suite (`npm run test:unit`). Fix any regressions in existing tests caused by the session client / config changes. | All unit test files | `[ ]` |
-| 9-2  | Run `npm run typecheck`. Fix any type errors. | All source files | `[ ]` |
-| 9-3  | Run `npm run lint`. Fix any lint errors. | All source files | `[ ]` |
-| 9-4  | Ensure all new unit tests added in Phases 1–7 pass with `npm run test:unit`. | All new `*.test.ts` files | `[ ]` |
+| 9-1  | Run the full unit test suite (`npm run test:unit`). Fix any regressions in existing tests caused by the session client / config changes. | All unit test files | `[x]` |
+| 9-2  | Run `npm run typecheck`. Fix any type errors. | All source files | `[x]` |
+| 9-3  | Run `npm run lint`. Fix any lint errors. | All source files | `[x]` |
+| 9-4  | Ensure all new unit tests added in Phases 1–7 pass with `npm run test:unit`. | All new `*.test.ts` files | `[x]` |
 
 ---
 
@@ -143,9 +143,9 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 
 | #    | Task | File / Location | Status |
 |------|------|-----------------|:------:|
-| 10-1 | Update integration test helpers (`tests/integration/helpers.ts`). Remove Phase 1 fixtures (`PromptPayload` etc.). Add a helper `sendInference(session, body)` that sends an `inference_request` and collects all `inference_response_chunk.data` lines until `data: [DONE]`. Add a `MockLlamaServer` helper that accepts HTTP connections on a Unix socket and emits configurable SSE responses (including tool-call chunks). | `tests/integration/helpers.ts` | `[ ]` |
-| 10-2 | Write integration tests for the full server-mode flow. Cases: `GET /v1/models` returns models from a mock router; `POST /v1/chat/completions` opens a session, sends `inference_request`, receives SSE stream, streams it back to the HTTP client; multi-turn: second `POST` reuses the existing session; client disconnect mid-stream aborts the inference; host busy returns 503. | `tests/integration/server.test.ts` | `[ ]` |
-| 10-3 | Write integration tests for CLI mode. Cases: host list is fetched and displayed; prompt → inference → text displayed; second prompt reuses session; Ctrl+C aborts in-flight inference cleanly. | `tests/integration/cli.test.ts` | `[ ]` |
+| 10-1 | Update integration test helpers (`tests/integration/helpers.ts`). Remove Phase 1 fixtures (`PromptPayload` etc.). Add a helper `sendInference(session, body)` that sends an `inference_request` and collects all `inference_response_chunk.data` lines until `data: [DONE]`. Add a `MockLlamaServer` helper that accepts HTTP connections on a Unix socket and emits configurable SSE responses (including tool-call chunks). | `tests/integration/helpers.ts` | `[x]` |
+| 10-2 | Write integration tests for the full server-mode flow. Cases: `GET /v1/models` returns models from a mock router; `POST /v1/chat/completions` opens a session, sends `inference_request`, receives SSE stream, streams it back to the HTTP client; multi-turn: second `POST` reuses the existing session; client disconnect mid-stream aborts the inference; host busy returns 503. | `tests/integration/server.test.ts` | `[x]` |
+| 10-3 | Write integration tests for CLI mode. Cases: host list is fetched and displayed; prompt → inference → text displayed; second prompt reuses session; Ctrl+C aborts in-flight inference cleanly. | `tests/integration/cli.test.ts` | `[x]` |
 
 ---
 
@@ -162,15 +162,15 @@ Update the CLI to work with the new session protocol. The UX is unchanged — th
 | 6 | CLI update | 2 | 2 | 0 | 0 | 0 |
 | 7 | Entry point + Dockerfile | 3 | 3 | 0 | 0 | 0 |
 | 8 | start-dev.sh update | 2 | 2 | 0 | 0 | 0 |
-| 9 | Unit tests | 4 | 0 | 0 | 0 | 4 |
-| 10 | Integration tests | 3 | 0 | 0 | 0 | 3 |
-| — | **Total** | **27** | **22** | **0** | **0** | **5** |
+| 9 | Unit tests | 4 | 4 | 0 | 0 | 0 |
+| 10 | Integration tests | 3 | 3 | 0 | 0 | 0 |
+| — | **Total** | **27** | **27** | **0** | **0** | **0** |
 
 ### Notes / blockers
 
-- **Phases 1–8 complete.** Config schema, Session Client, Host Session Pool, Model Registry, API Server, CLI, entry point (dual-mode), Dockerfile, and start-dev.sh --server flag all implemented and tested (134 unit tests green).
+- **All 27 tasks complete.** 134 unit tests + 20 integration tests (7 files) all green. Lint and typecheck clean.
 - **Phase 0 prerequisite satisfied.** `sharegrid-user/sharegrid-shared` updated to commit `fbffc67` (Phase 2 protocol types).
-- **Phases 9–10 not started.** Remaining: full unit test sweep (Phase 9) and integration tests (Phase 10).
+- Phase 2 LLMUser implementation is complete.
 
 ---
 
