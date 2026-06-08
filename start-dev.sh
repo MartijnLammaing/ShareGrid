@@ -183,6 +183,7 @@ docker run -d \
   -p "${HOST_PORT}:${HOST_PORT}" \
   -e SHAREGRID_ROUTER_URL="$HOST_ROUTER_URL" \
   -e SHAREGRID_LISTEN_PORT="$HOST_PORT" \
+  -e SHAREGRID_PUBLIC_IPV6="$SHAREGRID_PUBLIC_IPV6" \
   sharegrid-host
 
 log "Waiting for host to register with router..."
