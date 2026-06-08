@@ -104,12 +104,24 @@ fi
 
 # ── Step 4: Start router ──────────────────────────────────────────────────────
 
+# Detect host IPs to pass into the router container.
+# The container only sees its Docker bridge interface, so LAN and public IPv6
+# addresses must be resolved on the host and injected as env vars.
+log "Detecting host network addresses..."
+PRIMARY_IFACE=$(route get default 2>/dev/null | awk '/interface:/{print $2}')
+SHAREGRID_LAN_IPS=$(ipconfig getifaddr "$PRIMARY_IFACE" 2>/dev/null || true)
+SHAREGRID_PUBLIC_IPV6=$(curl -6 --max-time 3 -s https://api6.ipify.org 2>/dev/null || true)
+[[ -n "$SHAREGRID_LAN_IPS" ]]     && log "LAN IP: ${SHAREGRID_LAN_IPS}"     || log "LAN IP: not detected"
+[[ -n "$SHAREGRID_PUBLIC_IPV6" ]] && log "Public IPv6: ${SHAREGRID_PUBLIC_IPV6}" || log "Public IPv6: not detected"
+
 log "Starting sharegrid-router..."
 docker run -d \
   --name "$ROUTER_CONTAINER" \
   --network "$NETWORK" \
   -p "${ROUTER_PORT}:${ROUTER_PORT}" \
-  -e SHAREGRID_LISTEN_ADDR="0.0.0.0:${ROUTER_PORT}" \
+  -e SHAREGRID_LISTEN_ADDR=":::${ROUTER_PORT}" \
+  -e SHAREGRID_LAN_IPS="$SHAREGRID_LAN_IPS" \
+  -e SHAREGRID_PUBLIC_IPV6="$SHAREGRID_PUBLIC_IPV6" \
   sharegrid-router
 
 # ── Step 5: Extract router URLs (host registration + user access) ─────────────
@@ -204,6 +216,7 @@ if [[ "$SERVER_MODE" -eq 1 ]]; then
     -p "${USER_SERVER_PORT}:${USER_SERVER_PORT}" \
     -e SHAREGRID_ROUTER_URL="$USER_ROUTER_URL" \
     -e SHAREGRID_MODE=server \
+    -e SHAREGRID_LISTEN_HOST=0.0.0.0 \
     sharegrid-user
 
   log "Provider adapter running on http://localhost:${USER_SERVER_PORT}/v1"
