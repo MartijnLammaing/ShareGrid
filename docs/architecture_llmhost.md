@@ -114,8 +114,7 @@ Configuration comes from two sources: values baked into the image at build time,
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `SHAREGRID_MODEL_FILE` | Filename of the model (basename used as the advertised model name) | `Phi-3.5-mini-instruct-IQ2_M.gguf` |
-| `SHAREGRID_MODEL_PATH` | Full path to the model inside the container | `/data/model.gguf` |
+| `SHAREGRID_MODELS_DIR` | Directory the host scans at startup. The first `.gguf` file (alphabetically) becomes the active model; its filename without the `.gguf` extension is the advertised model name. | `/data/models` |
 
 #### Runtime configuration (docker run environment variables)
 
