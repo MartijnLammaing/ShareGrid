@@ -121,8 +121,9 @@ Configuration comes from two sources: values baked into the image at build time,
 
 | Variable | Required | Description | Example |
 |----------|:--------:|-------------|---------|
-| `SHAREGRID_ROUTER_URL` | Yes | **Host registration URL** for this network. Contains both the `fp` fingerprint and the host-specific `key`. | `https://router.example.com:8443?fp=sha256:a3f1...&key=h-x9k2mQ...` |
+| `SHAREGRID_ROUTER_URL` | Yes | **Host registration URL** for this network. Contains both the `fp` fingerprint and the host-specific `key`. | `https://192.168.1.10:8443?fp=sha256:a3f1...&key=h-x9k2mQ...` |
 | `SHAREGRID_LISTEN_PORT` | Yes | Port the Session Manager TLS listener binds to inside the container. Must match the `-p` flag. | `9000` |
+| `SHAREGRID_LISTEN_HOST` | Yes | This machine's **LAN IPv4 address** — advertised to the router as the session endpoint users dial directly. A bridge-networked container cannot detect the host LAN IP itself, so `docker-run.sh` detects it on the host OS and injects it. | `192.168.1.42` |
 | `SHAREGRID_HEARTBEAT_INTERVAL` | No | Seconds between heartbeat pings to the router. Default: `30`. | `30` |
 
 If any required runtime variable is absent, the container exits immediately with a clear error.
@@ -263,7 +264,7 @@ The Dockerfile uses a **three-stage build**:
 | `--read-only` | Immutable container filesystem |
 | `--tmpfs /tmp` | Writable temp directory for the llama.cpp Unix socket |
 | `--no-new-privileges` | Processes cannot escalate privileges |
-| `--network <isolated bridge>` | Container cannot see host network interfaces |
+| `--network <isolated bridge>` | Container cannot see host network interfaces — this is why the host's LAN IPv4 endpoint must be injected via `SHAREGRID_LISTEN_HOST` rather than auto-detected |
 | `--ipc=none` | No shared memory with host |
 | `--restart=on-failure` | Docker automatically restarts on unexpected exit |
 | `-p <host-port>:<container-port>` | Publishes only the Session Manager TLS port |
