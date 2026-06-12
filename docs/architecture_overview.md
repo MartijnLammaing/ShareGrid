@@ -223,6 +223,7 @@ LLMHost operators build their own Docker images (see §5.1 and §9). The followi
 - Is a single Docker container; **operators build their own image** with their chosen LLM (llama.cpp is the reference implementation; others may be substituted provided the internal API contract is met)
 - The operator's responsibilities are: building a compliant image (see §5.4), and running it with the correct hardening flags and the group's **host registration URL**
 - Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter using the host registration URL (which carries the host-specific `key` credential)
+- Advertises its session endpoint to the router as its **LAN IPv4 address** (`SHAREGRID_LISTEN_HOST`, injected at launch) plus its published port; this is the address users dial directly
 - Stores the router-issued host key in memory and enforces it on all incoming LLMUser connections
 - Accepts one session at a time (Phase 1–2 constraint; Phase 4 expands this)
 - Accepts full OpenAI-format inference requests (messages, tools, tool_choice) and streams raw SSE lines back — the host is a transparent tunnel between the user adapter and llama.cpp
@@ -271,6 +272,14 @@ The following table summarises how later phases extend the architecture. These c
 ---
 
 ## 9. Key Design Decisions and Rationale
+
+**LAN/IPv4 as the default connection model**
+Modules connect to one another over the local network using IPv4. The router, hosts, and users each run on their own machine (or the same machine for development) and reach each other via the target machine's **LAN IPv4 address plus a published port** — there is no shared Docker bridge network spanning the modules. A module that runs in a Docker container on a bridge network cannot observe its host machine's LAN IPv4 itself, so that address is **detected on the host OS and injected** into the container at launch:
+
+- The **router** advertises its LAN IPv4 in the startup-banner URLs via `SHAREGRID_LAN_IPS`.
+- The **host** advertises its LAN IPv4 to the router as its session endpoint via `SHAREGRID_LISTEN_HOST`.
+
+The `docker-run.sh` scripts auto-detect the LAN IPv4 (overridable with `SHAREGRID_ADVERTISE_IP`) and publish the relevant port. Internet/WAN reachability (public-IP discovery, NAT traversal) and IPv6 are out of scope for the current phases; only LAN IPv4 is supported.
 
 **Direct User ↔ Host connection (no router proxy)**
 The router only brokers the initial handshake. All inference traffic flows directly between user and host. This keeps the router lightweight and prevents it from becoming a bottleneck or a privacy risk as the network grows.

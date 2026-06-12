@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # start-dev.sh — Start the full ShareGrid network stack on a single machine.
 #
+# Modules connect over the LAN using IPv4 (the default ShareGrid network model):
+# each docker-run.sh auto-detects this machine's LAN IPv4 and the router, host,
+# and user reach each other via that address and their published ports. There is
+# no shared Docker bridge — running all three here simply exercises the same LAN
+# path that separate machines would use.
+#
 # Usage: ./start-dev.sh [--no-build] [--server]
 #
 # Default (no --server):
@@ -49,6 +55,9 @@ log "Removing existing named containers (if any)..."
 docker rm -f sharegrid-router 2>/dev/null || true
 docker rm -f sharegrid-host   2>/dev/null || true
 docker rm -f sharegrid-user   2>/dev/null || true
+
+# Remove the obsolete shared bridge network from pre-LAN setups, if present.
+docker network rm sharegrid-net 2>/dev/null || true
 
 # ── Step 2: Start router ──────────────────────────────────────────────────────
 

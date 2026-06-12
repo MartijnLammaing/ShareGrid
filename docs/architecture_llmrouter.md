@@ -226,6 +226,7 @@ The router is configured via environment variables on startup.
 | Variable | Required | Description | Example |
 |----------|:--------:|-------------|---------|
 | `SHAREGRID_LISTEN_ADDR` | Yes | Address and port the TLS Listener binds to | `0.0.0.0:8443` |
+| `SHAREGRID_LAN_IPS` | No | Comma-separated LAN IPv4 address(es) advertised in the startup-banner URLs. A bridge-networked container cannot detect the host LAN IP itself, so `docker-run.sh` detects it on the host OS and injects it. If absent, the banner warns and falls back to the raw listen address. | `192.168.1.42` |
 | `SHAREGRID_HEARTBEAT_TIMEOUT` | No | Seconds before a host with no heartbeat is evicted. Default: `90` | `90` |
 
 The TLS certificate and private key are managed internally. They are stored at a fixed path inside the container (`/data/certs/router.crt` and `/data/certs/router.key`). No operator-supplied cert configuration is needed or accepted.
@@ -240,8 +241,11 @@ The router is packaged and distributed as a Docker image. A minimal `docker run`
 docker run \
   -p 8443:8443 \
   -e SHAREGRID_LISTEN_ADDR=0.0.0.0:8443 \
+  -e SHAREGRID_LAN_IPS=192.168.1.42 \
   registry/llmrouter@sha256:<digest>
 ```
+
+`SHAREGRID_LAN_IPS` must be this machine's LAN IPv4 address — it is embedded in the startup-banner URLs that hosts and users dial directly. `docker-run.sh` auto-detects it for you.
 
 The router generates a self-signed TLS cert on first startup and writes it to `/data/certs` inside the container. No volume mount is required.
 
@@ -255,7 +259,7 @@ Unlike LLMHost, no paranoid hardening flags are required. Standard practice appl
 
 On successful startup, the router prints a summary to stdout. Its primary purpose is to give the operator the exact values to supply as `SHAREGRID_ROUTER_URL` when starting LLMHost and LLMUser nodes.
 
-The router enumerates all non-loopback network interfaces and prints a candidate endpoint for each, using the configured port and the `https://` scheme. It also performs a best-effort public IP lookup so operators behind NAT do not need to determine their public IP manually.
+ShareGrid connects modules over the LAN using IPv4. The router advertises its **LAN IPv4 address** in the candidate URLs, using the configured port and the `https://` scheme. Because the router runs in a Docker container on a bridge network, it cannot observe its host machine's LAN IPv4 itself; the address(es) are detected on the host OS by `docker-run.sh` and injected via the `SHAREGRID_LAN_IPS` environment variable (comma-separated; each is validated as IPv4). Loopback and non-IPv4 values are ignored.
 
 Example output:
 
@@ -265,27 +269,20 @@ LLMRouter started.
   Listen address : 0.0.0.0:8443
   TLS fingerprint: sha256:a3f1c2d4e5b6...
 
-  HOST REGISTRATION URLs — distribute only to trusted host operators:
-    https://203.0.113.7:8443?fp=sha256:a3f1c2d4e5b6...&key=h-x9k2mQ...    [public]
-    https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...&key=h-x9k2mQ...   [eth0]
-    https://10.0.0.5:8443?fp=sha256:a3f1c2d4e5b6...&key=h-x9k2mQ...       [wlan0]
+  HOST REGISTRATION URLs (distribute only to host operators):
+    https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...&key=h-x9k2mQ...   [lan]
 
-  USER ACCESS URLs — distribute only to end users:
-    https://203.0.113.7:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...    [public]
-    https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...   [eth0]
-    https://10.0.0.5:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...       [wlan0]
-
-  Set SHAREGRID_ROUTER_URL on each LLMHost to a HOST REGISTRATION URL.
-  Set SHAREGRID_ROUTER_URL on each LLMUser to a USER ACCESS URL.
+  USER ACCESS URLs (distribute only to end users):
+    https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...   [lan]
 ```
 
 Notes:
 - The `fp` query parameter contains the SHA-256 fingerprint of the router's TLS certificate. Clients parse it from the URL and pin the TLS connection to it — no separate cert distribution is needed.
 - The `key` query parameter is the role-specific secret. The router validates it on every connection before routing to the host registration or user host-list handler. A user presenting a user `key` cannot reach the host registration path.
 - **Both URLs are sensitive credentials.** The administrator must distribute each only to the appropriate role through trusted channels. A leak of either URL should be treated as a compromise requiring a router restart and full URL redistribution. See §4.4.
-- Loopback addresses (`127.0.0.1`, `::1`) are excluded — they are not reachable from other machines.
-- If no non-loopback interface is found, the router logs a warning and prints the raw listen address so the operator can still determine the correct value manually.
-- The public IP is resolved at startup by querying a public IP reflection service (e.g. `https://api.ipify.org`). If the lookup fails or times out, the `[public]` line is omitted and a warning is printed — this is non-fatal. The router starts regardless.
+- Loopback addresses (`127.0.0.1`) and any non-IPv4 value supplied in `SHAREGRID_LAN_IPS` are excluded — they are not valid LAN endpoints.
+- If no LAN IPv4 address is provided, the router logs a warning and prints the raw listen address so the operator can still determine the correct value manually.
+- Internet/WAN reachability (public-IP discovery, NAT traversal) and IPv6 are out of scope for the current phases; the banner advertises LAN IPv4 only.
 - The output is printed once at startup and not repeated. It is not part of the ongoing log stream.
 
 ---
