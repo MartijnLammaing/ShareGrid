@@ -223,7 +223,7 @@ LLMHost operators build their own Docker images (see §5.1 and §9). The followi
 - Is a single Docker container; **operators build their own image** with their chosen LLM (llama.cpp is the reference implementation; others may be substituted provided the internal API contract is met)
 - The operator's responsibilities are: building a compliant image (see §5.4), and running it with the correct hardening flags and the group's **host registration URL**
 - Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter using the host registration URL (which carries the host-specific `key` credential)
-- Advertises its session endpoint to the router as its **LAN IPv4 address** (`SHAREGRID_LISTEN_HOST`, injected at launch) plus its published port; this is the address users dial directly
+- Advertises its session endpoint to the router as the address dictated by the router's network mode — its **LAN IPv4 address** in `lan` mode or its **globally-routable IPv6 address** in `internet` mode (`SHAREGRID_LISTEN_HOST`, injected at launch) plus its published port; this is the address users dial directly
 - Stores the router-issued host key in memory and enforces it on all incoming LLMUser connections
 - Accepts one session at a time (Phase 1–2 constraint; Phase 4 expands this)
 - Accepts full OpenAI-format inference requests (messages, tools, tool_choice) and streams raw SSE lines back — the host is a transparent tunnel between the user adapter and llama.cpp
@@ -269,6 +269,8 @@ The following table summarises how later phases extend the architecture. These c
 | **4** | Multiple hosts and users. Session reservation (1 user per host per session). | Router gains session-state tracking and host-availability logic. Hosts must signal busy/free status. |
 | **Future** | Federation between independent trusted groups (e.g. inter-university, inter-department). Cross-group resource accounting. Model-selection assistant. | Router-to-router peering with explicit trust grants between group administrators. Resource metering and request classification layers. Each group retains control of its own membership and registration URL. |
 
+> **Network mode** (LAN/IPv4 vs Internet/IPv6, see §9) is a **standalone, cross-cutting connectivity option**, not a phase. It is orthogonal to the phase roadmap above — it changes only the address family modules advertise and dial, not the registration, session, or trust mechanics. It is distinct from Phase 3's "controlled internet access", which concerns *egress from the host's LLM container*, whereas network mode concerns *inbound reachability between modules*.
+
 ---
 
 ## 9. Key Design Decisions and Rationale
@@ -279,7 +281,23 @@ Modules connect to one another over the local network using IPv4. The router, ho
 - The **router** advertises its LAN IPv4 in the startup-banner URLs via `SHAREGRID_LAN_IPS`.
 - The **host** advertises its LAN IPv4 to the router as its session endpoint via `SHAREGRID_LISTEN_HOST`.
 
-The `docker-run.sh` scripts auto-detect the LAN IPv4 (overridable with `SHAREGRID_ADVERTISE_IP`) and publish the relevant port. Internet/WAN reachability (public-IP discovery, NAT traversal) and IPv6 are out of scope for the current phases; only LAN IPv4 is supported.
+The `docker-run.sh` scripts auto-detect the LAN IPv4 (overridable with `SHAREGRID_ADVERTISE_IP`) and publish the relevant port. WAN reachability via NAT traversal / public-IPv4 discovery remains out of scope; for cross-internet reachability ShareGrid uses globally-routable IPv6 instead (see **Network mode** below).
+
+**Network mode (LAN/IPv4 vs Internet/IPv6)**
+The router runs in one of two **network modes**, selected at startup via `SHAREGRID_NETWORK_MODE` (`lan` — the default — or `internet`). The mode determines the address family every module advertises and dials:
+
+- **`lan` (default):** the LAN/IPv4 model described above. Fully backward compatible — unchanged behaviour.
+- **`internet`:** modules are reached over their **globally-routable IPv6 address plus a published port**. Because every participating machine has a public IPv6 address, no NAT traversal or relay is required — the User ↔ Host connection remains direct, exactly as on the LAN. This mode is IPv6-only: the router advertises only its IPv6 address and the host relays only its IPv6 address.
+
+The mode is **authoritative and carried in the distributed URLs** as a `mode` query parameter (`mode=internet`; absent ⇒ `lan`). This means:
+
+- The **router** advertises its IPv6 address in the startup-banner URLs (still via `SHAREGRID_LAN_IPS`, which accepts IPv6 in internet mode) and stamps `mode=internet` on every URL.
+- The **host** parses the mode from its registration URL and advertises its IPv6 session endpoint accordingly (`SHAREGRID_LISTEN_HOST` is an IPv6 literal in internet mode). The host relays its IP address *according to the router's mode* — it does not choose the family independently.
+- The **user** parses the mode from its access URL and dials the host's IPv6 endpoint directly.
+
+IPv6 literals are written as a **bracketed authority** everywhere a `host:port` pair appears — in URLs (`https://[2001:db8::1]:8443?...`) and in the registry `endpoint` field (`[2001:db8::1]:9000`). Loopback, link-local (`fe80::`) and unique-local (`fc00::/7`) addresses are not advertised. The mode does not affect the security model: TLS-certificate-fingerprint pinning remains the sole trust anchor and is address-family agnostic, so no certificate or SAN changes are required.
+
+Auto-detecting a globally-routable IPv6 address is inherently unreliable (link-local and ULA addresses must be excluded, and detection differs across macOS/Linux). The `docker-run.sh` scripts make a best-effort attempt in internet mode but treat the manual `SHAREGRID_ADVERTISE_IP` override as the supported path, warning loudly if no global IPv6 is found.
 
 **Direct User ↔ Host connection (no router proxy)**
 The router only brokers the initial handshake. All inference traffic flows directly between user and host. This keeps the router lightweight and prevents it from becoming a bottleneck or a privacy risk as the network grows.

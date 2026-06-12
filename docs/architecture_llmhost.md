@@ -47,9 +47,9 @@ graph TB
 Owns the connection to LLMRouter. Responsibilities:
 
 - Generate an ephemeral TLS keypair at startup. The private key is held in memory only and is never written to disk.
-- Parse the `fp` and `key` query parameters from `SHAREGRID_ROUTER_URL`. `SHAREGRID_ROUTER_URL` must be the **host registration URL** (containing the host-specific `key`); it is distinct from the user access URL and cannot be used by LLMUsers. The `fp` value is a SHA-256 hex fingerprint prefixed with `sha256:` (e.g. `sha256:a3f1c2d4e5b6...`), matching the format printed by the router at startup (see [`architecture_llmrouter.md`](./architecture_llmrouter.md) §7).
+- Parse the `fp`, `key` and `mode` query parameters from `SHAREGRID_ROUTER_URL`. `SHAREGRID_ROUTER_URL` must be the **host registration URL** (containing the host-specific `key`); it is distinct from the user access URL and cannot be used by LLMUsers. The `fp` value is a SHA-256 hex fingerprint prefixed with `sha256:` (e.g. `sha256:a3f1c2d4e5b6...`), matching the format printed by the router at startup (see [`architecture_llmrouter.md`](./architecture_llmrouter.md) §7). The `mode` value (`lan` default, or `internet`) is the **router's network mode**; the host advertises its session endpoint in the address family the mode dictates — IPv4 in `lan` mode, globally-routable IPv6 in `internet` mode. The host relays its IP address *according to the router's mode*; it does not select the family independently.
 - Establish the TLS connection to the configured router address, pinned to the `fp` fingerprint.
-- Send the registration payload: the host `key`, model name, the Session Manager's listening port, and the TLS cert fingerprint so LLMUser adapters can pin to it. The router validates the host `key` before admitting the registration.
+- Send the registration payload: the host `key`, model name, the Session Manager's listening port, the advertised `listenHost` (IPv4 in `lan` mode, IPv6 literal in `internet` mode), and the TLS cert fingerprint so LLMUser adapters can pin to it. The router validates the host `key` before admitting the registration, and composes the registry `endpoint` from `listenHost` + port — bracketing IPv6 literals (`[2001:db8::1]:9000`).
 - Receive and store the router-issued **host key** (as `current_token`) and the **router's Ed25519 public key** in memory.
 - Pass the current host key token and the router public key to the Session Manager once registration is confirmed.
 - Emit a heartbeat on a fixed interval. Each heartbeat response carries a freshly issued host key token from the router; on receipt, rotate: `previous_token ← current_token`, `current_token ← new token`. Notify the Session Manager of the updated token pair. Clear `previous_token` after a 60-second grace period.
@@ -121,9 +121,9 @@ Configuration comes from two sources: values baked into the image at build time,
 
 | Variable | Required | Description | Example |
 |----------|:--------:|-------------|---------|
-| `SHAREGRID_ROUTER_URL` | Yes | **Host registration URL** for this network. Contains both the `fp` fingerprint and the host-specific `key`. | `https://192.168.1.10:8443?fp=sha256:a3f1...&key=h-x9k2mQ...` |
+| `SHAREGRID_ROUTER_URL` | Yes | **Host registration URL** for this network. Contains the `fp` fingerprint, the host-specific `key`, and (in internet mode) `mode=internet`. | `https://192.168.1.10:8443?fp=sha256:a3f1...&key=h-x9k2mQ...` |
 | `SHAREGRID_LISTEN_PORT` | Yes | Port the Session Manager TLS listener binds to inside the container. Must match the `-p` flag. | `9000` |
-| `SHAREGRID_LISTEN_HOST` | Yes | This machine's **LAN IPv4 address** — advertised to the router as the session endpoint users dial directly. A bridge-networked container cannot detect the host LAN IP itself, so `docker-run.sh` detects it on the host OS and injects it. | `192.168.1.42` |
+| `SHAREGRID_LISTEN_HOST` | Yes | This machine's address advertised to the router as the session endpoint users dial directly — its **LAN IPv4 address** in `lan` mode, or its **globally-routable IPv6 address** in `internet` mode (must match the router's mode). A bridge-networked container cannot detect the host address itself, so `docker-run.sh` detects it on the host OS and injects it. | `192.168.1.42` / `2001:db8::1` |
 | `SHAREGRID_HEARTBEAT_INTERVAL` | No | Seconds between heartbeat pings to the router. Default: `30`. | `30` |
 
 If any required runtime variable is absent, the container exits immediately with a clear error.
@@ -264,7 +264,7 @@ The Dockerfile uses a **three-stage build**:
 | `--read-only` | Immutable container filesystem |
 | `--tmpfs /tmp` | Writable temp directory for the llama.cpp Unix socket |
 | `--no-new-privileges` | Processes cannot escalate privileges |
-| `--network <isolated bridge>` | Container cannot see host network interfaces — this is why the host's LAN IPv4 endpoint must be injected via `SHAREGRID_LISTEN_HOST` rather than auto-detected |
+| `--network <isolated bridge>` | Container cannot see host network interfaces — this is why the host's advertised endpoint (LAN IPv4, or IPv6 in internet mode) must be injected via `SHAREGRID_LISTEN_HOST` rather than auto-detected. The Session Manager binds the IPv6 wildcard (`::`) in internet mode so IPv6 sessions are accepted |
 | `--ipc=none` | No shared memory with host |
 | `--restart=on-failure` | Docker automatically restarts on unexpected exit |
 | `-p <host-port>:<container-port>` | Publishes only the Session Manager TLS port |

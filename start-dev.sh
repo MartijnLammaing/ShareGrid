@@ -7,7 +7,14 @@
 # no shared Docker bridge — running all three here simply exercises the same LAN
 # path that separate machines would use.
 #
+# Internet mode (IPv6): set SHAREGRID_NETWORK_MODE=internet to advertise
+# globally-routable IPv6 addresses instead. The router/host docker-run.sh scripts
+# inherit this env var and the optional SHAREGRID_ADVERTISE_IP override. Note that
+# internet mode requires Docker IPv6 egress to be enabled on the daemon, and is
+# intended for cross-machine deployment rather than single-host dev.
+#
 # Usage: ./start-dev.sh [--no-build] [--server]
+#   SHAREGRID_NETWORK_MODE=internet ./start-dev.sh   # advertise IPv6
 #
 # Default (no --server):
 #   Starts sharegrid-router and sharegrid-host as background containers, then
