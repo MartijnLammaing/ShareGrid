@@ -225,8 +225,9 @@ The router is configured via environment variables on startup.
 
 | Variable | Required | Description | Example |
 |----------|:--------:|-------------|---------|
-| `SHAREGRID_LISTEN_ADDR` | Yes | Address and port the TLS Listener binds to | `0.0.0.0:8443` |
-| `SHAREGRID_LAN_IPS` | No | Comma-separated LAN IPv4 address(es) advertised in the startup-banner URLs. A bridge-networked container cannot detect the host LAN IP itself, so `docker-run.sh` detects it on the host OS and injects it. If absent, the banner warns and falls back to the raw listen address. | `192.168.1.42` |
+| `SHAREGRID_LISTEN_ADDR` | Yes | Address and port the TLS Listener binds to. In internet mode bind a dual-stack/IPv6 wildcard (`[::]:8443`). | `0.0.0.0:8443` |
+| `SHAREGRID_NETWORK_MODE` | No | Network mode: `lan` (default, IPv4) or `internet` (IPv6-only). Determines the address family advertised in the startup-banner URLs and stamped as the `mode` query parameter. | `lan` |
+| `SHAREGRID_LAN_IPS` | No | Comma-separated address(es) advertised in the startup-banner URLs. In `lan` mode these are LAN IPv4 addresses; in `internet` mode they are globally-routable IPv6 addresses (loopback, link-local `fe80::` and unique-local `fc00::/7` are ignored). A bridge-networked container cannot detect the host address itself, so `docker-run.sh` detects it on the host OS and injects it. If absent, the banner warns and falls back to the raw listen address. | `192.168.1.42` |
 | `SHAREGRID_HEARTBEAT_TIMEOUT` | No | Seconds before a host with no heartbeat is evicted. Default: `90` | `90` |
 
 The TLS certificate and private key are managed internally. They are stored at a fixed path inside the container (`/data/certs/router.crt` and `/data/certs/router.key`). No operator-supplied cert configuration is needed or accepted.
@@ -259,14 +260,18 @@ Unlike LLMHost, no paranoid hardening flags are required. Standard practice appl
 
 On successful startup, the router prints a summary to stdout. Its primary purpose is to give the operator the exact values to supply as `SHAREGRID_ROUTER_URL` when starting LLMHost and LLMUser nodes.
 
-ShareGrid connects modules over the LAN using IPv4. The router advertises its **LAN IPv4 address** in the candidate URLs, using the configured port and the `https://` scheme. Because the router runs in a Docker container on a bridge network, it cannot observe its host machine's LAN IPv4 itself; the address(es) are detected on the host OS by `docker-run.sh` and injected via the `SHAREGRID_LAN_IPS` environment variable (comma-separated; each is validated as IPv4). Loopback and non-IPv4 values are ignored.
+The router advertises its address in the candidate URLs, using the configured port and the `https://` scheme. Because the router runs in a Docker container on a bridge network, it cannot observe its host machine's address itself; the address(es) are detected on the host OS by `docker-run.sh` and injected via the `SHAREGRID_LAN_IPS` environment variable. The family depends on `SHAREGRID_NETWORK_MODE`:
 
-Example output:
+- **`lan` mode (default):** each candidate is validated as **IPv4**; loopback and non-IPv4 values are ignored. URLs carry no `mode` parameter (mode defaults to `lan`).
+- **`internet` mode:** each candidate is validated as a **globally-routable IPv6** address; loopback, link-local (`fe80::`) and unique-local (`fc00::/7`) values are ignored. The IPv6 literal is written as a **bracketed authority** (`[2001:db8::1]:8443`) and every URL is stamped with `mode=internet`.
+
+Example output (`lan` mode):
 
 ```
 LLMRouter started.
 
   Listen address : 0.0.0.0:8443
+  Network mode   : lan
   TLS fingerprint: sha256:a3f1c2d4e5b6...
 
   HOST REGISTRATION URLs (distribute only to host operators):
@@ -276,13 +281,29 @@ LLMRouter started.
     https://192.168.1.42:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...   [lan]
 ```
 
+Example output (`internet` mode):
+
+```
+LLMRouter started.
+
+  Listen address : [::]:8443
+  Network mode   : internet
+  TLS fingerprint: sha256:a3f1c2d4e5b6...
+
+  HOST REGISTRATION URLs (distribute only to host operators):
+    https://[2001:db8::1]:8443?fp=sha256:a3f1c2d4e5b6...&key=h-x9k2mQ...&mode=internet   [internet]
+
+  USER ACCESS URLs (distribute only to end users):
+    https://[2001:db8::1]:8443?fp=sha256:a3f1c2d4e5b6...&key=u-p7rNv4...&mode=internet   [internet]
+```
+
 Notes:
-- The `fp` query parameter contains the SHA-256 fingerprint of the router's TLS certificate. Clients parse it from the URL and pin the TLS connection to it — no separate cert distribution is needed.
+- The `fp` query parameter contains the SHA-256 fingerprint of the router's TLS certificate. Clients parse it from the URL and pin the TLS connection to it — no separate cert distribution is needed. Fingerprint pinning is address-family agnostic; internet mode requires no certificate or SAN change.
 - The `key` query parameter is the role-specific secret. The router validates it on every connection before routing to the host registration or user host-list handler. A user presenting a user `key` cannot reach the host registration path.
+- The `mode` query parameter is present (`mode=internet`) only in internet mode; its absence means `lan`. Hosts and users parse it to decide which address family to advertise and dial.
 - **Both URLs are sensitive credentials.** The administrator must distribute each only to the appropriate role through trusted channels. A leak of either URL should be treated as a compromise requiring a router restart and full URL redistribution. See §4.4.
-- Loopback addresses (`127.0.0.1`) and any non-IPv4 value supplied in `SHAREGRID_LAN_IPS` are excluded — they are not valid LAN endpoints.
-- If no LAN IPv4 address is provided, the router logs a warning and prints the raw listen address so the operator can still determine the correct value manually.
-- Internet/WAN reachability (public-IP discovery, NAT traversal) and IPv6 are out of scope for the current phases; the banner advertises LAN IPv4 only.
+- In `lan` mode, loopback (`127.0.0.1`) and any non-IPv4 value supplied in `SHAREGRID_LAN_IPS` are excluded. In `internet` mode, loopback, link-local, unique-local and any non-IPv6 value are excluded — they are not globally reachable endpoints.
+- If no address of the expected family is provided, the router logs a warning and prints the raw listen address so the operator can still determine the correct value manually.
 - The output is printed once at startup and not repeated. It is not part of the ongoing log stream.
 
 ---

@@ -82,7 +82,7 @@ Manages persistent TLS sessions to LLMHosts. Responsibilities:
 
 Handles one TLS connection to a single LLMHost. Responsibilities:
 
-- Open a TLS connection to the host endpoint, pinning to the TLS cert fingerprint received from the router.
+- Open a TLS connection to the host endpoint, pinning to the TLS cert fingerprint received from the router. The `endpoint` is a `host:port` authority that may be an IPv6 bracketed literal (`[2001:db8::1]:9000`) in internet mode; it is split with the shared endpoint parser, which strips the brackets before dialling.
 - Present the host key token in a `session_open` message; handle `session_ack` / `session_reject`.
 - **Phase 2 inference protocol:**
   - Send `inference_request` messages carrying the full OpenAI request body as a JSON string.
