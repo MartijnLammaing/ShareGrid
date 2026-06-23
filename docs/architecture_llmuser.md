@@ -93,7 +93,7 @@ Handles one TLS connection to a single LLMHost. Responsibilities:
 
 ### 2.5 API Server (HTTP server mode)
 
-An HTTP server exposing an OpenAI-compatible API. Binds to `127.0.0.1` only (localhost — no external exposure). Responsibilities:
+An HTTP server exposing an OpenAI-compatible API. Binds to `0.0.0.0` inside the Docker container; external exposure is restricted to `127.0.0.1` by the Docker port mapping (`-p 127.0.0.1:<port>:<port>`), so the server remains inaccessible from the network. Responsibilities:
 
 #### `GET /v1/models`
 
@@ -280,7 +280,7 @@ The host key token received from the router is presented verbatim to the LLMHost
 
 ### 4.3 Localhost-Only HTTP Server
 
-The API Server binds exclusively to `127.0.0.1`. It is not accessible from the network. OpenCode connects from the same machine. The ShareGrid `SHAREGRID_ROUTER_URL` (which embeds the secret `key`) is held in the adapter's environment — it is not exposed through the HTTP API.
+The API Server binds to `0.0.0.0` inside the Docker container, but Docker publishes the port only on the host's `127.0.0.1` (via `-p 127.0.0.1:<port>:<port>`). It is not accessible from the network. OpenCode connects from the same machine. The ShareGrid `SHAREGRID_ROUTER_URL` (which embeds the secret `key`) is held in the adapter's environment — it is not exposed through the HTTP API.
 
 ### 4.4 Tool Execution and the Perimeter
 
