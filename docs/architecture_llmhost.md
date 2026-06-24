@@ -78,7 +78,7 @@ The Session Manager exposes a raw **TLS server** using the ephemeral TLS keypair
   - The LLMUser adapter sends an `inference_request` message carrying the serialised OpenAI `/v1/chat/completions` request body (messages, tools, tool_choice, etc.) as a JSON string.
   - The Session Manager forwards the body to the Inference Proxy, which posts it verbatim to llama.cpp.
   - The Inference Proxy streams raw SSE lines back; each line is wrapped in an `inference_response_chunk` message and forwarded to the LLMUser adapter.
-  - When the `data: [DONE]` SSE line is detected, the Inference Proxy flushes the llama.cpp KV cache slot, then signals completion. The Session Manager loops back to wait for the next `inference_request`.
+  - When the `data: [DONE]` SSE line is detected, the Inference Proxy signals completion. The KV cache is left intact so llama.cpp can reuse the cached prefix on the next turn. The Session Manager loops back to wait for the next `inference_request`.
 - Either party may send `session_close` to end the session gracefully. The session slot is released and the KV cache is flushed if an inference was in progress.
 - If the idle timer expires (no `inference_request` received for 30 minutes), the Session Manager sends `session_timeout` and closes the connection.
 
@@ -89,7 +89,7 @@ The session slot is tied to the **TLS connection**: acquired on `session_ack`, r
 A thin forwarding layer between the Session Manager and llama.cpp. Phase 2 design:
 
 - **`forwardInference(body: string, onChunk: (sseLine: string) => void, signal: AbortSignal): Promise<void>`** — posts the raw OpenAI request body to llama.cpp's `/v1/chat/completions` endpoint over the internal Unix socket. Emits each raw SSE line via `onChunk` (e.g. `"data: {...}"`, `"data: [DONE]"`). Resolves when `[DONE]` is emitted or when `signal` is aborted. No content parsing; no text extraction; no tool-call awareness — this is a transparent pipe.
-- **`flushSlot(): Promise<boolean>`** — calls llama.cpp's `DELETE /slots/0` to wipe the KV cache. Called after each completed or aborted inference turn. Returns `false` on failure; the Session Manager exits the container on `false`.
+- **`flushSlot(): Promise<boolean>`** — calls llama.cpp's `DELETE /slots/0` to wipe the KV cache. Called on session teardown (not between turns within the same session). Returns `false` on failure; the Session Manager exits the container on `false`.
 - On `signal` abort: destroys the HTTP request to llama.cpp; calls `flushSlot()`.
 
 The Inference Proxy uses Node.js's built-in `http.request` with `socketPath: '/tmp/llama.sock'`. This is the fixed internal path; it is not configurable at runtime.
@@ -183,10 +183,8 @@ sequenceDiagram
                 SM-->>U: inference_response_chunk {data: sseLine}
             end
             LLM-->>IP: data: [DONE]
-            IP->>LLM: DELETE /slots/0  (flush KV cache)
-            LLM-->>IP: Confirmed
             IP-->>SM: Promise resolved
-            Note over SM: Loop back — wait for next inference_request
+            Note over SM: KV cache intact — prefix reused on next turn<br/>Loop back — wait for next inference_request
         end
 
         alt User closes session
@@ -270,7 +268,9 @@ The Dockerfile uses a **three-stage build**:
 
 ### 5.4 Session Isolation
 
-After each completed or aborted inference turn, the Inference Proxy calls llama.cpp's `DELETE /slots/0` to wipe the KV cache. The model has no memory of the previous turn's tokens once this call succeeds. This happens **between turns** (not just between sessions) so that tool results from one turn do not persist into the next independent conversation context.
+The KV cache is flushed at **session teardown** — not between turns. This allows llama.cpp to reuse the cached prefix across turns within the same session: OpenAI-compatible clients (including OpenCode) always resend the full conversation history on every request, so llama.cpp's prefix matching only needs to process the new tokens rather than re-prefilling the entire context from scratch. This eliminates the dominant source of latency on large prompts.
+
+Cross-session isolation is maintained by the slot lock: the slot is released only after `DELETE /slots/0` succeeds. A new user session can never acquire a slot whose KV cache still holds the previous user's context.
 
 If the slot-erase call fails, the Session Manager exits the container with a non-zero code. Docker's `--restart=on-failure` policy restarts it and triggers clean re-registration.
 
