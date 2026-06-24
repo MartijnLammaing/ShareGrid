@@ -1,6 +1,6 @@
 # LLMUser — Component Architecture
 
-> **Scope:** Phase 1 (MVP) and Phase 2 (OpenCode provider integration). See [`architecture_overview.md`](./architecture_overview.md) for system-wide context, security model, and the phase roadmap.
+> **Scope:** Phase 1 (MVP), Phase 2 (OpenCode provider integration), and Phase 3 (availability-aware host selection + multi-session pool). See [`architecture_overview.md`](./architecture_overview.md) for system-wide context, security model, and the phase roadmap.
 
 ---
 
@@ -63,20 +63,27 @@ A thin caching layer over the Router Client. Responsibilities:
 - Map each `HostListEntry` to an OpenAI-format model object:
   - `id`: the `modelName` from the host (e.g. `Phi-3.5-mini-instruct-IQ2_M`)
   - `owned_by`: `"sharegrid"`
-  - Additional metadata (context window size) surfaced as model properties where the API permits
+  - `context_length`: the `contextSize` reported by the host at registration
+  - `sharegrid_available_slots`: sum of `availableSlots` across all hosts carrying this model
+  - `sharegrid_total_slots`: sum of `totalSlots` across all hosts carrying this model
 - Maintain a short-TTL cache (default 30 s) to avoid querying the router on every `GET /v1/models` call.
-- Expose a lookup function `resolveHost(modelId) → HostListEntry` used by the API Server and CLI to find the target host for a given model.
-- In Phase 2, if multiple hosts carry the same model name, the first available host is selected. Phase 3 will add proper availability-aware selection.
+- Expose `resolveHost(modelId) → HostListEntry` — returns the first host with `availableSlots > 0`, falling back to any host if none are available. Used by the CLI.
+- **(Phase 3)** Expose `resolveHosts(modelId) → HostListEntry[]` — returns all hosts carrying the model, sorted so hosts with `availableSlots > 0` appear first. Used by the API Server for its retry loop (see §2.5).
 
 ### 2.3 Host Session Pool
 
 Manages persistent TLS sessions to LLMHosts. Responsibilities:
 
-- Maintain at most one live `SessionClient` per `hostId`.
-- `acquire(host: HostListEntry): Promise<SessionClient>` — returns the existing session if connected, opens a new one if not (sends `session_open`, waits for `session_ack`).
-- On `session_reject` with reason `busy`: propagate to the caller as a 503 response.
-- On socket error or unexpected close: mark the session as dead; the next `acquire` call re-opens it.
-- Sessions stay open between inference turns for the lifetime of the process — this is the persistent session model that makes multi-turn conversations efficient.
+- **(Phase 3)** Maintain a list of `SessionClient` instances per `hostId` (was: at most one).
+- `acquire(host: HostListEntry): Promise<SessionClient>` — implements **conversation affinity**:
+  1. Prune dead sessions from the list (`isAlive() === false`).
+  2. Return the first session that is both alive and not currently performing inference (`isInferenceActive() === false`). This is the "same session" guarantee for sequential conversations — between turns, the session is always idle and is always returned first.
+  3. If no idle session exists (all alive sessions are currently inferring, i.e. concurrent conversations), open a new one: send `session_open`, wait for `session_ack`. A `session_reject: busy` from the host (all slots full) propagates as `HostBusyError`.
+  4. Add the new session to the list and return it.
+- On socket error or unexpected close: mark the session as dead; it is pruned on the next `acquire` call.
+- Sessions stay open between inference turns for the lifetime of the process — this is the persistent session model that makes multi-turn conversations efficient and enables llama.cpp KV cache prefix reuse.
+
+**`SessionClient.isInferenceActive()`** — new Phase 3 method. Returns `true` while a `sendInferenceRequest` promise is pending; `false` otherwise. Used by the pool to distinguish idle sessions from in-use sessions.
 
 ### 2.4 Session Client
 
@@ -103,13 +110,13 @@ An HTTP server exposing an OpenAI-compatible API. Binds to `0.0.0.0` inside the 
 #### `POST /v1/chat/completions`
 
 - Parses the request body; extracts `model`.
-- Calls `ModelRegistry.resolveHost(model)` to find the target host.
-- Calls `HostSessionPool.acquire(host)` to get a live session.
-- Forces `stream: true` in the request body (OpenCode always streams; non-streaming is not supported in Phase 2).
-- Sends the request body as an `inference_request` message through the session.
+- **(Phase 3)** Calls `ModelRegistry.resolveHosts(model)` to get the ordered host list (available hosts first).
+- **(Phase 3)** Iterates the list: for each host, calls `HostSessionPool.acquire(host)`; on `HostBusyError` continues to the next host; on any other error or after exhausting all hosts, returns 503.
+- Forces `stream: true` in the request body (OpenCode always streams; non-streaming is not supported).
+- Sends the request body as an `inference_request` message through the acquired session.
 - Pipes each `inference_response_chunk.data` line back to the HTTP client as an SSE event, forwarding the raw llama.cpp SSE output verbatim.
 - On HTTP client disconnect (e.g. OpenCode cancels): calls `session.abort()`.
-- Returns HTTP 503 if the host slot is busy.
+- Returns HTTP 503 if all hosts for the requested model are busy.
 
 **Authentication:** No API key is required — the server binds to localhost only. The ShareGrid credentials (`SHAREGRID_ROUTER_URL`) live in the adapter's environment, invisible to OpenCode.
 
@@ -330,5 +337,5 @@ The user access URL contains a user-specific `key` credential that is distinct f
 |-------|--------|---------------------------|
 | **1** | MVP | CLI only. Single prompt/response per turn. Phase 1 protocol types. |
 | **2** | OpenCode provider integration | Redesigned as dual-mode service: HTTP server (default) + CLI. New `InferenceRequestPayload` / `InferenceResponseChunk` protocol. Model Registry, Host Session Pool, API Server added. Phase 1 protocol types removed. |
-| **3** | Multiple hosts and users | Model Registry adds availability-aware host selection. Session Pool handles multiple concurrent sessions. API Server returns per-host availability in model metadata. |
+| **3** | Multiple hosts and users | `SessionClient` gains `isInferenceActive()`. Model Registry: `resolveHosts()` returns all hosts sorted available-first; `getModels()` aggregates `sharegrid_available_slots`, `sharegrid_total_slots`, `context_length` across hosts per model. Host Session Pool: `Map<hostId, SessionClient[]>` with conversation-affinity acquire. API Server: iterates host list with `HostBusyError` retry; surfaces slot metadata in `/v1/models`. |
 | **Future** | Resource accounting, model-selection assistant | Usage tracking; automatic model selection before connecting. |

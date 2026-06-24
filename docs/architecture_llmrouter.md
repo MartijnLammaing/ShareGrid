@@ -1,6 +1,6 @@
 # LLMRouter — Component Architecture
 
-> **Scope:** Phase 1 (MVP) and beyond. The LLMRouter is **unchanged in Phase 2** — no router code, configuration, or protocol changes are required for OpenCode provider integration. See [`architecture_overview.md`](./architecture_overview.md) for system-wide context, security model, and the phase roadmap.
+> **Scope:** Phase 1 (MVP), Phase 2 (OpenCode provider integration — no router changes required), and Phase 3 (multi-host availability tracking). See [`architecture_overview.md`](./architecture_overview.md) for system-wide context, security model, and the phase roadmap.
 
 ---
 
@@ -70,18 +70,21 @@ An in-memory map of currently active LLMHosts. Each entry holds:
 |-------|-------------|
 | `host_id` | Opaque identifier assigned at registration |
 | `model_name` | Human-readable model name, as reported by the host |
-| `context_size` | Context window size in tokens |
+| `context_size` | Context window size in tokens, as reported by the host at registration |
 | `endpoint` | Host address + port for direct LLMUser connections |
 | `tls_fingerprint` | TLS cert fingerprint for LLMUser cert pinning |
 | `host_key_token` | The current signed token issued by the Key Authority; refreshed on every heartbeat |
 | `last_seen` | Timestamp of the most recent heartbeat |
+| `max_sessions` | **(Phase 3)** Maximum concurrent sessions the host supports, as reported at registration |
+| `active_sessions` | **(Phase 3)** Currently occupied session slots; updated on every heartbeat and on every `host_status_update` message |
 
 Responsibilities:
 
 - Add an entry on successful host registration.
-- On each heartbeat: update `last_seen` and replace `host_key_token` with the newly issued token.
+- On each heartbeat: update `last_seen`, replace `host_key_token` with the newly issued token, and update `active_sessions` with the value carried in the heartbeat payload.
+- **(Phase 3)** On each `host_status_update` message: update `active_sessions` immediately. This provides near-zero-latency availability signalling without waiting for the next heartbeat.
 - Run a background eviction loop: remove any host whose `last_seen` exceeds the configured heartbeat timeout. An evicted host is immediately absent from the host list returned to LLMUsers.
-- Return the full host list (all non-evicted entries) on request.
+- Return the full host list (all non-evicted entries) on request. Each entry in the response includes `available_slots` (computed as `max_sessions - active_sessions`, clamped to zero) and `total_slots` (equal to `max_sessions`).
 
 > The registry always holds only the *current* token per host. The LLMHost is responsible for retaining the previous token during the overlap window (see §4.3).
 
@@ -100,19 +103,19 @@ sequenceDiagram
     participant KA as Key Authority
     participant HR as Host Registry
 
-    H->>TLS: TLS connect + registration payload<br/>(key=host-secret, model metadata, port, TLS cert fingerprint)
-    TLS->>TLS: Validate host secret (key param)<br/>Validate payload (required fields present, port in valid range)
+    H->>TLS: TLS connect + registration payload<br/>(key=host-secret, model metadata, port, TLS cert fingerprint,<br/>context_size, max_sessions)
+    TLS->>TLS: Validate host secret (key param)<br/>Validate payload (required fields, port in range,<br/>max_sessions 1–32, context_size positive)
     TLS->>KA: Request host key token<br/>(host_id, tls_fingerprint, expiry)
     KA->>KA: Sign payload with Ed25519 private key
     KA-->>TLS: Signed host key token
-    TLS->>HR: Add host entry<br/>(metadata + token + last_seen = now)
+    TLS->>HR: Add host entry<br/>(metadata + token + last_seen = now,<br/>max_sessions, active_sessions = 0)
     TLS-->>H: Host key token + router Ed25519 public key
 
     loop Heartbeat
-        H->>TLS: Heartbeat ping
+        H->>TLS: Heartbeat ping (active_sessions = N)
         TLS->>KA: Request new host key token
         KA-->>TLS: Fresh signed token
-        TLS->>HR: Update last_seen + replace host_key_token
+        TLS->>HR: Update last_seen + replace host_key_token<br/>+ update active_sessions
         TLS-->>H: New host key token
         H->>H: Rotate tokens (previous ← current, current ← new)
     end
@@ -136,6 +139,28 @@ sequenceDiagram
 
     Note over U: User selects a host and opens<br/>a direct TLS session — router is no longer involved
 ```
+
+### 3.3 Host Status Update (Phase 3)
+
+In addition to heartbeat-based load reporting, the LLMHost sends an immediate `host_status_update` message every time a session slot is acquired or released. This gives the router near-zero-latency availability information without waiting for the next heartbeat cycle (~30 s).
+
+```mermaid
+sequenceDiagram
+    participant H as LLMHost
+    participant TLS as TLS Listener
+    participant HR as Host Registry
+
+    Note over H: A new user session is accepted<br/>(active_sessions: 0 → 1)
+    H->>TLS: host_status_update {hostId, active_sessions: 1}
+    TLS->>HR: updateStatus(hostId, active_sessions=1)
+    Note over HR: available_slots updated immediately;<br/>next host_list_response reflects new value
+
+    Note over H: Session ends<br/>(active_sessions: 1 → 0)
+    H->>TLS: host_status_update {hostId, active_sessions: 0}
+    TLS->>HR: updateStatus(hostId, active_sessions=0)
+```
+
+The `host_status_update` message is sent on the same persistent TLS connection the host holds after registration — no new connection is opened. The router treats an unknown `hostId` in a status update as a protocol error and closes the connection. The heartbeat still carries `active_sessions` as a consistency check; if the two values diverge (e.g. due to a missed status update), the heartbeat value takes precedence.
 
 ---
 
@@ -314,5 +339,5 @@ Notes:
 |-------|--------|-----------------------------|
 | **1** | MVP | Architecture described in this document. |
 | **2** | Structured tool-call responses on the host side | No router changes required. The User ↔ Host channel is direct. |
-| **3** | Multiple simultaneous hosts and users; session reservation | Host Registry must track busy/free status per host. TLS Listener must handle host status update messages. User handshake response must surface host availability. |
+| **3** | Multiple simultaneous hosts and users; session reservation | Host Registry extended with `max_sessions`, `active_sessions`, computed `available_slots`/`total_slots`. TLS Listener handles `host_status_update` messages and extracts `active_sessions` from heartbeats. Registration payload extended with `max_sessions` and `context_size`. Host list response surfaces `available_slots`, `total_slots`, `context_size` per host. |
 | **Future** | Federation between independent trusted groups (e.g. inter-university, inter-department). Cross-group resource accounting. | Router-to-router peering with explicit trust grants between group administrators. Each group retains its own Key Authority and membership control. A shared or replicated Host Registry layer enables cross-group host discovery. Key Authority must support key rotation without invalidating all live tokens. |
