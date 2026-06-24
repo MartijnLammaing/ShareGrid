@@ -314,6 +314,5 @@ Notes:
 |-------|--------|-----------------------------|
 | **1** | MVP | Architecture described in this document. |
 | **2** | Structured tool-call responses on the host side | No router changes required. The User ↔ Host channel is direct. |
-| **3** | Controlled internet access for LLMHost | No router changes required. Internet policy is enforced at the container level. |
-| **4** | Multiple simultaneous hosts and users; session reservation | Host Registry must track busy/free status per host. TLS Listener must handle host status update messages. User handshake response must surface host availability. |
+| **3** | Multiple simultaneous hosts and users; session reservation | Host Registry must track busy/free status per host. TLS Listener must handle host status update messages. User handshake response must surface host availability. |
 | **Future** | Federation between independent trusted groups (e.g. inter-university, inter-department). Cross-group resource accounting. | Router-to-router peering with explicit trust grants between group administrators. Each group retains its own Key Authority and membership control. A shared or replicated Host Registry layer enables cross-group host discovery. Key Authority must support key rotation without invalidating all live tokens. |
