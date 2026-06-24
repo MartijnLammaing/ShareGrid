@@ -1,6 +1,6 @@
 # ShareGrid — Technical Implementation Guidelines
 
-> **Scope:** Phase 1 (MVP). Applies to all four repositories: `sharegrid-shared`, `sharegrid-router`, `sharegrid-host`, `sharegrid-user`.
+> **Scope:** All phases. Applies to all four repositories: `sharegrid-shared`, `sharegrid-router`, `sharegrid-host`, `sharegrid-user`.
 
 ---
 
@@ -27,7 +27,7 @@ Four repositories under the same GitHub organisation:
 | `sharegrid-host` | LLMHost process + Dockerfile |
 | `sharegrid-user` | LLMUser CLI + Dockerfile |
 
-`sharegrid-shared` is a **foundational Phase 1 deliverable**. All three component repos depend on it for protocol types, crypto helpers, TLS utilities, and typed error classes. Its public interfaces must be defined before component implementation begins. During Phase 1, component repos reference it by file path (see §2.3).
+`sharegrid-shared` is a **foundational shared package**. All three component repos depend on it for protocol types, crypto helpers, TLS utilities, and typed error classes. Its public interfaces must be defined before component implementation begins. Component repos reference it by file path (see §2.3).
 
 ### 2.1 Per-component repo layout
 
@@ -76,7 +76,7 @@ tsconfig.json
 
 ### 2.3 Local development reference
 
-During Phase 1, component repos reference the shared package by file path:
+Component repos reference the shared package by file path:
 
 ```json
 {
@@ -231,7 +231,7 @@ The newline-delimited JSON framing described in this section applies to **all** 
 
 ### Version field
 
-Every message carries a `v` field set to `1` for Phase 1. This allows future phases to introduce new message formats while remaining backward-compatible: a receiver that sees an unknown `v` can reject the connection with a clear error rather than misinterpreting the payload.
+Every message carries a `v` field set to `1`. This allows future phases to introduce new message formats while remaining backward-compatible: a receiver that sees an unknown `v` can reject the connection with a clear error rather than misinterpreting the payload.
 
 ```
 {"v":1,"type":"register","modelName":"llama-3-8b-instruct-q4",...}\n
@@ -607,7 +607,7 @@ Rules:
 ## 13. Dependency Policy
 
 - **`@sharegrid/shared`**: zero runtime dependencies — Node.js built-ins only.
-- **Component repos**: minimal. Permitted runtime dependencies for Phase 1:
+- **Component repos**: minimal. Permitted runtime dependencies:
   - `zod` — configuration validation
   - `pino` — structured logging
   - `selfsigned` (`sharegrid-host` and `sharegrid-router`) — self-signed X.509 certificate generation. `sharegrid-host` generates an ephemeral cert at every process startup (memory only). `sharegrid-router` generates a cert on first startup and persists it to a fixed internal path so the fingerprint stays stable across `docker stop`/`docker start` cycles (see `architecture_llmrouter.md` §6.1). Node.js has no built-in API for X.509 generation; `selfsigned` wraps Node.js's own `crypto` primitives and introduces no third-party cryptographic implementation.
