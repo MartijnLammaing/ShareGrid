@@ -1,6 +1,6 @@
 # LLMHost — Component Architecture
 
-> **Scope:** Phase 1 (MVP) and Phase 2 (OpenCode provider + tool-call pass-through). See [`architecture_overview.md`](./architecture_overview.md) for system-wide context, security model, and the phase roadmap.
+> **Scope:** Phase 1 (MVP), Phase 2 (OpenCode provider + tool-call pass-through), and Phase 3 (concurrent sessions + availability reporting). See [`architecture_overview.md`](./architecture_overview.md) for system-wide context, security model, and the phase roadmap.
 
 ---
 
@@ -49,24 +49,26 @@ Owns the connection to LLMRouter. Responsibilities:
 - Generate an ephemeral TLS keypair at startup. The private key is held in memory only and is never written to disk.
 - Parse the `fp`, `key` and `mode` query parameters from `SHAREGRID_ROUTER_URL`. `SHAREGRID_ROUTER_URL` must be the **host registration URL** (containing the host-specific `key`); it is distinct from the user access URL and cannot be used by LLMUsers. The `fp` value is a SHA-256 hex fingerprint prefixed with `sha256:` (e.g. `sha256:a3f1c2d4e5b6...`), matching the format printed by the router at startup (see [`architecture_llmrouter.md`](./architecture_llmrouter.md) §7). The `mode` value (`lan` default, or `internet`) is the **router's network mode**; the host advertises its session endpoint in the address family the mode dictates — IPv4 in `lan` mode, globally-routable IPv6 in `internet` mode. The host relays its IP address *according to the router's mode*; it does not select the family independently.
 - Establish the TLS connection to the configured router address, pinned to the `fp` fingerprint.
-- Send the registration payload: the host `key`, model name, the Session Manager's listening port, the advertised `listenHost` (IPv4 in `lan` mode, IPv6 literal in `internet` mode), and the TLS cert fingerprint so LLMUser adapters can pin to it. The router validates the host `key` before admitting the registration, and composes the registry `endpoint` from `listenHost` + port — bracketing IPv6 literals (`[2001:db8::1]:9000`).
+- Send the registration payload: the host `key`, model name, context size, the Session Manager's listening port, the advertised `listenHost` (IPv4 in `lan` mode, IPv6 literal in `internet` mode), the TLS cert fingerprint, and `maxSessions` (from `SHAREGRID_MAX_SESSIONS`). The router validates the host `key` before admitting the registration, and composes the registry `endpoint` from `listenHost` + port — bracketing IPv6 literals (`[2001:db8::1]:9000`).
 - Receive and store the router-issued **host key** (as `current_token`) and the **router's Ed25519 public key** in memory.
 - Pass the current host key token and the router public key to the Session Manager once registration is confirmed.
-- Emit a heartbeat on a fixed interval. Each heartbeat response carries a freshly issued host key token from the router; on receipt, rotate: `previous_token ← current_token`, `current_token ← new token`. Notify the Session Manager of the updated token pair. Clear `previous_token` after a 60-second grace period.
+- Emit a heartbeat on a fixed interval. Each heartbeat carries the current `activeSessions` count. Each heartbeat response carries a freshly issued host key token from the router; on receipt, rotate: `previous_token ← current_token`, `current_token ← new token`. Notify the Session Manager of the updated token pair. Clear `previous_token` after a 60-second grace period.
+- **(Phase 3)** Expose a `reportStatus(activeSessions: number)` method. Called by the Session Manager immediately when a session slot is acquired or released; sends a `host_status_update` message to the router on the live connection. No-op if not yet registered or if the router socket is gone (the next heartbeat will reconcile the value).
 - On router disconnection, attempt reconnection with exponential backoff (initial delay 1 s, doubling on each attempt, capped at 60 s) and signal the Session Manager to stop accepting new sessions until re-registration succeeds.
 
 ### 2.2 Session Manager
 
 The single point of entry for incoming LLMUser connections. Responsibilities:
 
-- Maintain a **session slot** — a binary lock acquired when a session opens and released on teardown. Enforces the one-session-at-a-time constraint (Phase 1–2).
+- **(Phase 1–2)** Maintain a **binary session slot** — a lock acquired when a session opens and released on teardown. **(Phase 3)** The binary slot is replaced by a **capacity counter**: a `Set<number>` of active slot IDs in the range `0..maxSessions-1`. `acquireSlot()` finds the lowest free ID, inserts it into the set, and returns it; `releaseSlot(slotId)` removes it. After every acquire or release, `onSessionCountChange(activeSessions)` is called — this triggers `RouterClient.reportStatus()` so the router's availability data is updated immediately.
 - Validate the **host key** presented by the connecting LLMUser adapter against the current token pair (current + previous) before any inference traffic is allowed (see §5.2).
-- Reject connections when: (a) the session slot is occupied, (b) router registration is not confirmed, or (c) key validation fails.
-- Enter an **inference loop** after session open: accept sequential `inference_request` messages, forward each to the Inference Proxy, stream `inference_response_chunk` messages back, and loop. The session remains open and the slot remains occupied between inference turns.
+- Reject connections when: (a) no slot is available (set is full), (b) router registration is not confirmed, or (c) key validation fails.
+- Enter an **inference loop** after session open: accept sequential `inference_request` messages, forward each to the Inference Proxy (passing the assigned `slotId`), stream `inference_response_chunk` messages back, and loop. The session remains open and the slot remains occupied between inference turns.
 - Maintain an **idle timer** that resets each time an `inference_request` is received. If no request arrives within 30 minutes, the Session Manager closes the session and triggers normal teardown.
-- Coordinate session teardown: instruct the Inference Proxy to flush the llama.cpp slot, then release the session lock.
+- Coordinate session teardown: instruct the Inference Proxy to flush the llama.cpp slot (by `slotId`), then release the session slot.
 - On slot-erase failure, exit the container with a non-zero code — Docker's `--restart=on-failure` policy will restart it and trigger a clean re-registration.
-- On TLS socket close/error during an active inference: abort the in-flight request (via `AbortSignal`), flush the llama.cpp slot, release the session lock.
+- On TLS socket close/error during an active inference: abort the in-flight request (via `AbortSignal`), flush the llama.cpp slot (by `slotId`), release the session slot.
+- Expose `getActiveSessions(): number` — returns the current set size; used by RouterClient for heartbeat reporting.
 
 #### Session protocol (Phase 2)
 
@@ -88,9 +90,9 @@ The session slot is tied to the **TLS connection**: acquired on `session_ack`, r
 
 A thin forwarding layer between the Session Manager and llama.cpp. Phase 2 design:
 
-- **`forwardInference(body: string, onChunk: (sseLine: string) => void, signal: AbortSignal): Promise<void>`** — posts the raw OpenAI request body to llama.cpp's `/v1/chat/completions` endpoint over the internal Unix socket. Emits each raw SSE line via `onChunk` (e.g. `"data: {...}"`, `"data: [DONE]"`). Resolves when `[DONE]` is emitted or when `signal` is aborted. No content parsing; no text extraction; no tool-call awareness — this is a transparent pipe.
-- **`flushSlot(): Promise<boolean>`** — calls llama.cpp's `DELETE /slots/0` to wipe the KV cache. Called on session teardown (not between turns within the same session). Returns `false` on failure; the Session Manager exits the container on `false`.
-- On `signal` abort: destroys the HTTP request to llama.cpp; calls `flushSlot()`.
+- **`forwardInference(body: string, onChunk: (sseLine: string) => void, signal: AbortSignal, slotId: number): Promise<void>`** — **(Phase 3)** injects `"id_slot": slotId` into the request body before posting to llama.cpp's `/v1/chat/completions` endpoint over the internal Unix socket. This directs llama.cpp to use the specific KV cache slot assigned to the session, enabling parallel inference across sessions without KV cache collisions. Emits each raw SSE line via `onChunk` (e.g. `"data: {...}"`, `"data: [DONE]"`). Resolves when `[DONE]` is emitted or when `signal` is aborted. No other content parsing; no text extraction; no tool-call awareness — this is a transparent pipe.
+- **`flushSlot(slotId: number): Promise<boolean>`** — **(Phase 3)** calls llama.cpp's `DELETE /slots/<slotId>` to wipe the KV cache for the given slot. (Phase 1–2 used the hardcoded path `/slots/0`.) Called on session teardown (not between turns within the same session). Returns `false` on failure; the Session Manager exits the container on `false`.
+- On `signal` abort: destroys the HTTP request to llama.cpp; calls `flushSlot(slotId)`.
 
 The Inference Proxy uses Node.js's built-in `http.request` with `socketPath: '/tmp/llama.sock'`. This is the fixed internal path; it is not configurable at runtime.
 
@@ -124,6 +126,7 @@ Configuration comes from two sources: values baked into the image at build time,
 | `SHAREGRID_LISTEN_PORT` | Yes | Port the Session Manager TLS listener binds to inside the container. Must match the `-p` flag. | `9000` |
 | `SHAREGRID_LISTEN_HOST` | Yes | This machine's address advertised to the router as the session endpoint users dial directly — its **LAN IPv4 address** in `lan` mode, or its **globally-routable IPv6 address** in `internet` mode (must match the router's mode). A bridge-networked container cannot detect the host address itself, so `docker-run.sh` detects it on the host OS and injects it. | `192.168.1.42` / `2001:db8::1` |
 | `SHAREGRID_HEARTBEAT_INTERVAL` | No | Seconds between heartbeat pings to the router. Default: `30`. | `30` |
+| `SHAREGRID_MAX_SESSIONS` | No | **(Phase 3)** Maximum number of concurrent user sessions. Passed as `--parallel <N>` to llama.cpp. Range 1–32. Default `1` (identical to Phase 1–2 behaviour). | `4` |
 
 If any required runtime variable is absent, the container exits immediately with a clear error.
 
@@ -154,29 +157,33 @@ sequenceDiagram
 
 ---
 
-## 4. Session Lifecycle (Phase 2)
+## 4. Session Lifecycle (Phase 3)
+
+Up to `maxSessions` connections may be open simultaneously; each acquires its own `slotId`. The diagram below shows a single session for clarity — multiple concurrent sessions follow the same pattern in parallel.
 
 ```mermaid
 sequenceDiagram
     participant U as LLMUser adapter
     participant SM as Session Manager
+    participant RC as Router Client
     participant IP as Inference Proxy
     participant LLM as llama.cpp
 
     U->>SM: Open TLS connection (pinned cert)\nPresent host key token
     SM->>SM: Validate host key (§5.2)
-    SM->>SM: Acquire session slot
+    SM->>SM: acquireSlot() → slotId (or null if full)
 
-    alt key invalid or slot occupied
+    alt key invalid or no slot available
         SM-->>U: session_reject
     else accepted
+        SM->>RC: reportStatus(activeSessions)
         SM-->>U: session_ack
 
         loop Inference turns (one per OpenCode request/tool-result cycle)
             U->>SM: inference_request {body: "<OpenAI JSON>"}
             SM->>SM: Reset idle timer
-            SM->>IP: forwardInference(body, signal)
-            IP->>LLM: POST /v1/chat/completions (Unix socket)\nFull OpenAI body incl. messages + tools
+            SM->>IP: forwardInference(body, signal, slotId)
+            IP->>LLM: POST /v1/chat/completions (Unix socket)\nBody with id_slot injected
             loop SSE stream
                 LLM-->>IP: SSE line
                 IP-->>SM: onChunk(sseLine)
@@ -184,7 +191,7 @@ sequenceDiagram
             end
             LLM-->>IP: data: [DONE]
             IP-->>SM: Promise resolved
-            Note over SM: KV cache intact — prefix reused on next turn<br/>Loop back — wait for next inference_request
+            Note over SM: KV cache intact for this slot — prefix reused on next turn<br/>Loop back — wait for next inference_request
         end
 
         alt User closes session
@@ -194,10 +201,11 @@ sequenceDiagram
             SM-->>U: session_timeout
         else Socket closed by user (e.g. OpenCode exits)
             SM->>IP: abort in-flight inference
-            IP->>LLM: request.destroy() + DELETE /slots/0
+            IP->>LLM: request.destroy() + DELETE /slots/<slotId>
         end
 
-        SM->>SM: Release session slot
+        SM->>SM: releaseSlot(slotId)
+        SM->>RC: reportStatus(activeSessions)
     end
 ```
 
@@ -292,7 +300,7 @@ They do not protect against a **malicious LLMHost operator** (root access to the
 | Router connection lost (during active session) | Active session is allowed to complete. New sessions are rejected until re-registration succeeds. |
 | Container exits unexpectedly | Docker `--restart=on-failure` restarts it. Container re-registers as a new host. |
 | Slot-erase fails after inference turn | Session Manager exits the container with a non-zero code. Docker restarts it. |
-| Session slot occupied when new connection arrives | Immediate `session_reject`. No queue in Phase 1–2. |
+| Session slot occupied when new connection arrives | Immediate `session_reject`. No queue in Phase 1–2. **(Phase 3)** Rejected when `activeSlots.size === maxSessions`. |
 | LLMUser idle for 30 minutes | Idle timer expires. Teardown: llama.cpp slot flushed, session lock released. User receives `session_timeout`. |
 | LLMUser socket closes mid-inference | `AbortSignal` fires; Inference Proxy destroys the HTTP request; `flushSlot()` called; session lock released. |
 
@@ -304,5 +312,5 @@ They do not protect against a **malicious LLMHost operator** (root access to the
 |-------|--------|---------------------------|
 | **1** | MVP | Router Client, Session Manager (single prompt/response per turn), Inference Proxy (text extraction). |
 | **2** | OpenCode provider integration | Inference Proxy redesigned as raw OpenAI pass-through. Session Manager updated to handle multi-turn inference loop on a persistent session. Phase 1 prompt/response/cancel protocol types removed from `sharegrid-shared`. |
-| **3** | Multiple simultaneous sessions | Session Manager's binary slot becomes a capacity counter. `--parallel N` in llama.cpp. Router Client reports current load. |
+| **3** | Multiple simultaneous sessions | Session Manager's binary slot becomes a capacity counter (`Set<number>` of slot IDs 0..maxSessions-1). `--parallel N` passed to llama.cpp from `SHAREGRID_MAX_SESSIONS`. InferenceProxy injects `id_slot` and uses per-slot `DELETE /slots/<id>`. RouterClient includes `activeSessions` in heartbeats and sends `host_status_update` on slot acquire/release. |
 | **Future** | Cross-group resource accounting | Metering layer inside container; router-to-router peering. |
