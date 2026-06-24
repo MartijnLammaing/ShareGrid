@@ -66,7 +66,7 @@ A thin caching layer over the Router Client. Responsibilities:
   - Additional metadata (context window size) surfaced as model properties where the API permits
 - Maintain a short-TTL cache (default 30 s) to avoid querying the router on every `GET /v1/models` call.
 - Expose a lookup function `resolveHost(modelId) → HostListEntry` used by the API Server and CLI to find the target host for a given model.
-- In Phase 2, if multiple hosts carry the same model name, the first available host is selected. Phase 4 will add proper availability-aware selection.
+- In Phase 2, if multiple hosts carry the same model name, the first available host is selected. Phase 3 will add proper availability-aware selection.
 
 ### 2.3 Host Session Pool
 
@@ -330,6 +330,5 @@ The user access URL contains a user-specific `key` credential that is distinct f
 |-------|--------|---------------------------|
 | **1** | MVP | CLI only. Single prompt/response per turn. Phase 1 protocol types. |
 | **2** | OpenCode provider integration | Redesigned as dual-mode service: HTTP server (default) + CLI. New `InferenceRequestPayload` / `InferenceResponseChunk` protocol. Model Registry, Host Session Pool, API Server added. Phase 1 protocol types removed. |
-| **3** | Controlled internet access on host side | No LLMUser changes required. |
-| **4** | Multiple hosts and users | Model Registry adds availability-aware host selection. Session Pool handles multiple concurrent sessions. API Server returns per-host availability in model metadata. |
+| **3** | Multiple hosts and users | Model Registry adds availability-aware host selection. Session Pool handles multiple concurrent sessions. API Server returns per-host availability in model metadata. |
 | **Future** | Resource accounting, model-selection assistant | Usage tracking; automatic model selection before connecting. |

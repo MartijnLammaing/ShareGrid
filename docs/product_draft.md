@@ -73,18 +73,13 @@ Acceptance criteria of Phase 2:
 - A connected LLMHost can not go outside the bounds of the allowed perimeter.
 
 # Phase 3
-The third phase adds the capability to let the LLMHost LLM access information on the internet for their answers.
-
-Acceptance criteria of phase 3:
-- A LLMUser can get up-to-date and correct information from the LLMHost when asked a topic about current events.
-- A LLMHost can not be used for illicit material retrieval, or do illegal actions on the internet.
-
-# Phase 4
 Adds the option for multiple LLMUsers and LLMHosts to enter the network. For now, a LLMHost will be reserved for 1 LLMUser per session.
 
-Acceptance criteria of phase 4:
+Acceptance criteria of phase 3:
 - A second LLMUser and LLMHost can be added.
 - Once a LLMHost is in use, it can't be reached by another LLMUser.
+
+> **Note:** Internet access for the LLM is handled via OpenCode's tool-call execution on the user machine, governed by OpenCode's `permission` setting. No host-side internet access is required.
 
 # Next phases
 

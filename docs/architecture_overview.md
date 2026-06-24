@@ -225,7 +225,7 @@ LLMHost operators build their own Docker images (see §5.1 and §9). The followi
 - Generates an ephemeral TLS keypair on startup and registers with the configured LLMRouter using the host registration URL (which carries the host-specific `key` credential)
 - Advertises its session endpoint to the router as the address dictated by the router's network mode — its **LAN IPv4 address** in `lan` mode or its **globally-routable IPv6 address** in `internet` mode (`SHAREGRID_LISTEN_HOST`, injected at launch) plus its published port; this is the address users dial directly
 - Stores the router-issued host key in memory and enforces it on all incoming LLMUser connections
-- Accepts one session at a time (Phase 1–2 constraint; Phase 4 expands this)
+- Accepts one session at a time (Phase 1–2 constraint; Phase 3 expands this)
 - Accepts full OpenAI-format inference requests (messages, tools, tool_choice) and streams raw SSE lines back — the host is a transparent tunnel between the user adapter and llama.cpp
 - Wipes all session state (llama.cpp KV cache) between inference turns and on session end; exits the container if the wipe cannot be confirmed
 
@@ -265,11 +265,10 @@ The following table summarises how later phases extend the architecture. These c
 |-------|----------|----------------------|
 | **1** | MVP: 1 host, 1 router, 1 user. CLI only. No internet. No execution. | Baseline architecture described in this document. → [Phase 1 completion summary](phase_1_summary.md) |
 | **2** | OpenCode provider integration. LLMUser becomes an OpenAI-compatible HTTP server. Tool execution on user machine governed by OpenCode's permission system. | LLMUser is redesigned as a dual-mode service (HTTP provider adapter + optional CLI). LLMHost Inference Proxy becomes a raw OpenAI pass-through tunnel. `sharegrid-shared` protocol updated: Phase 1 prompt/response types removed; `InferenceRequestPayload` and `InferenceResponseChunk` added. → [Phase 2 completion summary](phase_2_summary.md) |
-| **3** | Controlled internet access for LLMHost. | Docker container gains a filtered egress proxy. Router or a separate policy service controls allowed domains. |
-| **4** | Multiple hosts and users. Session reservation (1 user per host per session). | Router gains session-state tracking and host-availability logic. Hosts must signal busy/free status. |
+| **3** | Multiple hosts and users. Session reservation (1 user per host per session). | Router gains session-state tracking and host-availability logic. Hosts must signal busy/free status. |
 | **Future** | Federation between independent trusted groups (e.g. inter-university, inter-department). Cross-group resource accounting. Model-selection assistant. | Router-to-router peering with explicit trust grants between group administrators. Resource metering and request classification layers. Each group retains control of its own membership and registration URL. |
 
-> **Network mode** (LAN/IPv4 vs Internet/IPv6, see §9) is a **standalone, cross-cutting connectivity option**, not a phase. It is orthogonal to the phase roadmap above — it changes only the address family modules advertise and dial, not the registration, session, or trust mechanics. It is distinct from Phase 3's "controlled internet access", which concerns *egress from the host's LLM container*, whereas network mode concerns *inbound reachability between modules*.
+> **Network mode** (LAN/IPv4 vs Internet/IPv6, see §9) is a **standalone, cross-cutting connectivity option**, not a phase. It is orthogonal to the phase roadmap above — it changes only the address family modules advertise and dial, not the registration, session, or trust mechanics. Internet access for the LLM is handled via OpenCode's tool-call execution on the user machine, governed by OpenCode's `permission` setting.
 
 ---
 
@@ -326,7 +325,7 @@ Weights are loaded once at container start rather than per session. A slot-erase
 The router client, session manager, and inference proxy run inside the same container as the inference engine. Once an operator has built their image, deployment is a single `docker run` with the hardening flags and registration URL; no bind mounts or separate host-side processes are required. Each container restart generates a new ephemeral TLS keypair and re-registers with the router.
 
 **Stateless session teardown**
-The LLMHost destroys all session context after a session ends. This is a security requirement to prevent cross-session information leakage, and is foundational for Phase 4's multi-user model.
+The LLMHost destroys all session context after a session ends. This is a security requirement to prevent cross-session information leakage, and is foundational for Phase 3's multi-user model.
 
 **CLI-only interface in Phase 1**
 Removes the attack surface of a local web server or file system access. Phase 2 introduces execution capabilities, which will require their own sandboxing design.

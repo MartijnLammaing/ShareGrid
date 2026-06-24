@@ -304,6 +304,5 @@ They do not protect against a **malicious LLMHost operator** (root access to the
 |-------|--------|---------------------------|
 | **1** | MVP | Router Client, Session Manager (single prompt/response per turn), Inference Proxy (text extraction). |
 | **2** | OpenCode provider integration | Inference Proxy redesigned as raw OpenAI pass-through. Session Manager updated to handle multi-turn inference loop on a persistent session. Phase 1 prompt/response/cancel protocol types removed from `sharegrid-shared`. |
-| **3** | Controlled internet access | Container networking gains a filtered egress proxy. No inference code changes. |
-| **4** | Multiple simultaneous sessions | Session Manager's binary slot becomes a capacity counter. `--parallel N` in llama.cpp. Router Client reports current load. |
+| **3** | Multiple simultaneous sessions | Session Manager's binary slot becomes a capacity counter. `--parallel N` in llama.cpp. Router Client reports current load. |
 | **Future** | Cross-group resource accounting | Metering layer inside container; router-to-router peering. |
