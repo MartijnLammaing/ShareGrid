@@ -58,12 +58,12 @@ Make all changes in the canonical shared repo (whichever is tracked by the submo
 
 | # | Task | File | Status |
 |---|------|------|:------:|
-| S3-4 | **Fix pre-existing gap:** add `contextSize: number` to `RegistrationPayload`. The host already validates and uses `SHAREGRID_MODEL_CONTEXT_SIZE`; it was never included in the registration payload sent to the router, leaving `context_size` absent from the Host Registry and Host List despite being specified in the architecture. This fix closes that gap as part of Phase 3. | `sharegrid-shared/src/protocol.ts` | `[ ]` |
-| S3-5 | Add `contextSize: number` to `HostListEntry`. The router will populate this from the value received at registration and include it in every host list response. LLMUsers surface it as `context_length` on `OpenAIModel`. | `sharegrid-shared/src/protocol.ts` | `[ ]` |
-| S3-6 | Add `maxSessions: number` to `RegistrationPayload` (range 1–32, validated by the router) and `activeSessions: number` to `HeartbeatPayload` (current occupied slot count at the time of the heartbeat). | `sharegrid-shared/src/protocol.ts` | `[ ]` |
-| S3-7 | Add new interface `HostStatusUpdate`: `{ v: ProtocolVersion; type: 'host_status_update'; hostId: string; activeSessions: number }`. Add `HostStatusUpdate` to the `RouterIncomingMessage` discriminated union. | `sharegrid-shared/src/protocol.ts` | `[ ]` |
-| S3-8 | Add `availableSlots: number` and `totalSlots: number` to `HostListEntry`. The router computes these as `max_sessions - active_sessions` (clamped to 0) and `max_sessions` respectively. | `sharegrid-shared/src/protocol.ts` | `[ ]` |
-| S3-9 | Update unit tests in `sharegrid-shared/tests/unit/protocol.test.ts`: add cases asserting that `HostStatusUpdate` is a valid member of `RouterIncomingMessage`; assert the new fields are present on `RegistrationPayload`, `HeartbeatPayload`, and `HostListEntry`. Advance the submodule pointer in `sharegrid-host`, `sharegrid-router`, and `sharegrid-user` to the commit that includes all protocol changes. Verify `npm run typecheck && npm run test:unit` passes in each consumer. | `sharegrid-shared/tests/unit/protocol.test.ts` + submodule pointers | `[ ]` |
+| S3-4 | **Fix pre-existing gap:** add `contextSize: number` to `RegistrationPayload`. The host already validates and uses `SHAREGRID_MODEL_CONTEXT_SIZE`; it was never included in the registration payload sent to the router, leaving `context_size` absent from the Host Registry and Host List despite being specified in the architecture. This fix closes that gap as part of Phase 3. | `sharegrid-shared/src/protocol.ts` | `[x]` |
+| S3-5 | Add `contextSize: number` to `HostListEntry`. The router will populate this from the value received at registration and include it in every host list response. LLMUsers surface it as `context_length` on `OpenAIModel`. | `sharegrid-shared/src/protocol.ts` | `[x]` |
+| S3-6 | Add `maxSessions: number` to `RegistrationPayload` (range 1–32, validated by the router) and `activeSessions: number` to `HeartbeatPayload` (current occupied slot count at the time of the heartbeat). | `sharegrid-shared/src/protocol.ts` | `[x]` |
+| S3-7 | Add new interface `HostStatusUpdate`: `{ v: ProtocolVersion; type: 'host_status_update'; hostId: string; activeSessions: number }`. Add `HostStatusUpdate` to the `RouterIncomingMessage` discriminated union. | `sharegrid-shared/src/protocol.ts` | `[x]` |
+| S3-8 | Add `availableSlots: number` and `totalSlots: number` to `HostListEntry`. The router computes these as `max_sessions - active_sessions` (clamped to 0) and `max_sessions` respectively. | `sharegrid-shared/src/protocol.ts` | `[x]` |
+| S3-9 | Update unit tests in `sharegrid-shared/tests/unit/protocol.test.ts`: add cases asserting that `HostStatusUpdate` is a valid member of `RouterIncomingMessage`; assert the new fields are present on `RegistrationPayload`, `HeartbeatPayload`, and `HostListEntry`. Advance the submodule pointer in `sharegrid-host`, `sharegrid-router`, and `sharegrid-user` to the commit that includes all protocol changes. Verify `npm run typecheck && npm run test:unit` passes in each consumer. | `sharegrid-shared/tests/unit/protocol.test.ts` + submodule pointers | `[x]` |
 
 ---
 
@@ -72,7 +72,7 @@ Make all changes in the canonical shared repo (whichever is tracked by the submo
 | Phase | Status | Notes |
 |-------|:------:|-------|
 | 0 — Architecture updates | `[x]` | All four docs updated on `phase-3/plan` branch |
-| 1 — Protocol additions | `[ ]` | |
+| 1 — Protocol additions | `[x]` | Shared repo committed @ `fbfc44a` on `origin/main`; all three nested pointers advanced; shared typecheck/lint/78 tests green. Consumer typecheck red by design — fixed in 3.2/3.3/3.4. |
 
 ---
 
