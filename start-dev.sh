@@ -189,6 +189,10 @@ if [[ "$SERVER_MODE" -eq 1 ]]; then
       # Run the CLI container interactively in the foreground. The host wrapper
       # was backgrounded above, so it stays alive while the user interacts.
       log "Starting sharegrid-user (CLI mode)..."
+      if [[ "$BUILD" -eq 1 ]]; then
+        log "Building sharegrid-user image..."
+        docker build -t sharegrid-user "$SCRIPT_DIR/sharegrid-user"
+      fi
       export SHAREGRID_ROUTER_URL="$USER_ROUTER_URL"
       # Ensure the native host (and its restart loop + llama-server) is torn down
       # when the user exits the CLI.
