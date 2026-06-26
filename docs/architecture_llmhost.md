@@ -106,7 +106,8 @@ Runs the LLM model and serves the inference API. Configuration:
 - `--unix-socket /tmp/llama.sock` — listens on an internal Unix socket only; no network port is opened for this channel.
 - `--parallel 1` — single inference slot; enforces one active request at a time.
 - **Tool calling** — llama.cpp's OpenAI-compatible API supports tool calling natively; Phase 2 requires no llama.cpp configuration change.
-- **CPU-only** — no CUDA, Metal, or ROCm in Phase 1–2. GPU support is a later-phase concern.
+- **CPU-only in Docker** — no CUDA, Metal, or ROCm in the Linux container image.
+- **Metal GPU on macOS** — **(Phase 4)** an Apple Silicon native deployment mode builds `llama-server` with `GGML_METAL=ON` and runs it under a restrictive `sandbox-exec` profile. The Node.js host code is unchanged; only the launch path differs.
 
 ### 2.5 Configuration
 
@@ -127,6 +128,8 @@ Configuration comes from two sources: values baked into the image at build time,
 | `SHAREGRID_LISTEN_HOST` | Yes | This machine's address advertised to the router as the session endpoint users dial directly — its **LAN IPv4 address** in `lan` mode, or its **globally-routable IPv6 address** in `internet` mode (must match the router's mode). A bridge-networked container cannot detect the host address itself, so `docker-run.sh` detects it on the host OS and injects it. | `192.168.1.42` / `2001:db8::1` |
 | `SHAREGRID_HEARTBEAT_INTERVAL` | No | Seconds between heartbeat pings to the router. Default: `30`. | `30` |
 | `SHAREGRID_MAX_SESSIONS` | No | **(Phase 3)** Maximum number of concurrent user sessions. Passed as `--parallel <N>` to llama.cpp. Range 1–32. Default `1` (identical to Phase 1–2 behaviour). | `4` |
+| `SHAREGRID_LLAMA_BINARY` | No | **(Phase 4)** Path to the `llama-server` binary. Default: `/app/llama-server`. Set by `docker-run.sh` and `macos-run.sh`. | `/app/llama-server` |
+| `SHAREGRID_SANDBOX_PROFILE` | No | **(Phase 4)** Optional path to a `sandbox-exec` SBPL profile. When set, the inference process is launched inside `sandbox-exec`. Used by the macOS native launch script. | `macos-native/sandbox.sb` |
 
 If any required runtime variable is absent, the container exits immediately with a clear error.
 
@@ -274,6 +277,31 @@ The Dockerfile uses a **three-stage build**:
 | `--restart=on-failure` | Docker automatically restarts on unexpected exit |
 | `-p <host-port>:<container-port>` | Publishes only the Session Manager TLS port |
 
+#### macOS native hardening (Phase 4)
+
+On Apple Silicon, operators may run the host natively instead of inside Docker. The `macos-native/` directory contains:
+
+- `setup.sh` — builds a Metal-enabled, statically-linked `llama-server` from the pinned `LLAMA_TAG`. `cmake` is a prerequisite; if it is not on `PATH`, `setup.sh` provisions one into a Python venv at `~/Library/Caches/sharegrid/cmake-venv` (override with `SHAREGRID_CMAKE_VENV`). This venv is kept **outside** the workspace so editor tooling does not auto-activate it and corrupt the stdin of TUI tools such as opencode.
+- `sandbox.sb` — a restrictive SBPL profile parameterised with the binary path and models directory.
+- `macos-run.sh` — launch script that sets the required environment, builds the host bundle if needed, and runs `node dist/bundle.cjs`.
+
+The inference process is spawned inside `sandbox-exec`. The profile explicitly allows:
+
+- execution of the configured `llama-server` binary,
+- reading the model directory and the binary itself,
+- reading system libraries/frameworks and the dyld cache,
+- writing the Unix socket and Metal shader caches,
+- Metal/IOKit services.
+
+It explicitly denies:
+
+- outbound and inbound network connections,
+- reading sensitive host paths such as `/etc`.
+
+`macos-run.sh` restarts the Node.js process on non-zero exit, mirroring Docker's `--restart=on-failure` behaviour.
+
+> **Note:** `sandbox-exec` is deprecated by Apple and is intended as defense-in-depth, not as a sole security boundary. The operator is still a trusted participant in the ShareGrid network.
+
 ### 5.4 Session Isolation
 
 The KV cache is flushed at **session teardown** — not between turns. This allows llama.cpp to reuse the cached prefix across turns within the same session: OpenAI-compatible clients (including OpenCode) always resend the full conversation history on every request, so llama.cpp's prefix matching only needs to process the new tokens rather than re-prefilling the entire context from scratch. This eliminates the dominant source of latency on large prompts.
@@ -313,4 +341,5 @@ They do not protect against a **malicious LLMHost operator** (root access to the
 | **1** | MVP | Router Client, Session Manager (single prompt/response per turn), Inference Proxy (text extraction). |
 | **2** | OpenCode provider integration | Inference Proxy redesigned as raw OpenAI pass-through. Session Manager updated to handle multi-turn inference loop on a persistent session. Phase 1 prompt/response/cancel protocol types removed from `sharegrid-shared`. |
 | **3** | Multiple simultaneous sessions | Session Manager's binary slot becomes a capacity counter (`Set<number>` of slot IDs 0..maxSessions-1). `--parallel N` passed to llama.cpp from `SHAREGRID_MAX_SESSIONS`. InferenceProxy injects `id_slot` and uses per-slot `DELETE /slots/<id>`. RouterClient includes `activeSessions` in heartbeats and sends `host_status_update` on slot acquire/release. |
+| **4** | macOS native deployment with Metal | The `llama-server` binary path and an optional `sandbox-exec` profile become runtime configuration. A new `macos-native/` directory builds a Metal-enabled `llama-server` and launches it under a restrictive SBPL sandbox on Apple Silicon. The Docker path remains unchanged and CPU-only. |
 | **Future** | Cross-group resource accounting | Metering layer inside container; router-to-router peering. |
