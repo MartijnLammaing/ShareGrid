@@ -121,8 +121,8 @@ if [[ -z "$HOST_ROUTER_URL" || -z "$USER_ROUTER_URL" ]]; then
   exit 1
 fi
 
-log "Host registration URL: ${HOST_ROUTER_URL}"
-log "User access URL:       ${USER_ROUTER_URL}"
+log "Host registration token: ${HOST_ROUTER_URL}"
+log "User access token:       ${USER_ROUTER_URL}"
 
 # ── Step 3: Start host ────────────────────────────────────────────────────────
 
