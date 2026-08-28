@@ -193,12 +193,12 @@ if [[ "$SERVER_MODE" -eq 1 ]]; then
         log "Building sharegrid-user image..."
         docker build -t sharegrid-user "$SCRIPT_DIR/sharegrid-user"
       fi
-      export SHAREGRID_ROUTER_URL="$USER_ROUTER_URL"
+      DECODED_USER_URL=$(printf '%s' "$USER_ROUTER_URL" | openssl base64 -A -d)
       # Ensure the native host (and its restart loop + llama-server) is torn down
       # when the user exits the CLI.
       trap 'log "Stopping native host..."; stop_native_host' EXIT
       exec docker run -it --rm --name sharegrid-user \
-        -e SHAREGRID_ROUTER_URL="$USER_ROUTER_URL" \
+        -e SHAREGRID_ROUTER_URL="$DECODED_USER_URL" \
         -e SHAREGRID_MODE=cli \
         sharegrid-user:latest
     else
